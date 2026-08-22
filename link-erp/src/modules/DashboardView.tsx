@@ -66,6 +66,9 @@ export const DashboardView: React.FC<{ onOpen?: (moduleKey: string) => void }> =
 
   const s = data.summary;
   const peak = Math.max(1, ...data.trend.map(t => Number(t.taxable_value)));
+  const isFirstWorkingDay =
+    Number(s.stock_pieces) === 0 && Number(s.sales_ytd) === 0 &&
+    Number(s.receivables) === 0 && Number(s.payables) === 0;
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -78,6 +81,29 @@ export const DashboardView: React.FC<{ onOpen?: (moduleKey: string) => void }> =
       />
 
       <div className="p-4 print-area">
+        {isFirstWorkingDay && onOpen && (
+          <section className="mb-4 rounded-lg border border-blue-300 bg-blue-50 p-4 print:hidden">
+            <h2 className="text-sm font-bold text-blue-950">Start your first working day</h2>
+            <p className="mt-1 text-xs text-blue-900">
+              Your books are empty, which is normal for a new company. Enter live documents in this order;
+              do not add pretend invoices to a real mill’s books.
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              {[
+                ['qualities', '1. Check masters'],
+                ['grey_inward', '2. Record grey inward'],
+                ['dyeing_issue', '3. Issue to dyeing'],
+                ['dyeing_receipt', '4. Receive from dyeing'],
+                ['dispatch', '5. Dispatch & invoice']
+              ].map(([key, label]) => (
+                <button key={key} onClick={() => onOpen(key!)} className="erp-btn erp-btn-primary justify-center">
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Tile label="Sales today" value={`₹ ${inr(s.sales_today)}`}
             sub={`Month ₹ ${short(s.sales_mtd)} · Year ₹ ${short(s.sales_ytd)}`}
@@ -165,12 +191,12 @@ export const DashboardView: React.FC<{ onOpen?: (moduleKey: string) => void }> =
         {onOpen && (
           <div className="flex flex-wrap gap-2 mt-4 print:hidden">
             {[
-              ['live_grey_inward', 'Grey Inward'],
-              ['scan_issue', 'Issue to Dyeing'],
+              ['grey_inward', 'Grey Inward'],
+              ['dyeing_issue', 'Issue to Dyeing'],
               ['dyeing_receipt', 'Dyeing Receipt'],
-              ['scan_dispatch', 'Dispatch'],
-              ['sales_invoice', 'Tax Invoice'],
-              ['payment', 'Receipt / Payment']
+              ['dispatch', 'Dispatch'],
+              ['sales_invoices', 'Tax Invoice'],
+              ['payments', 'Receipt / Payment']
             ].map(([key, label]) => (
               <button key={key} onClick={() => onOpen(key!)} className="erp-btn erp-btn-primary">
                 {label}

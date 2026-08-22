@@ -11,7 +11,7 @@ production IRP filing, or a CA opinion has been obtained.
   payments, cancellation, tenant isolation, concurrency, GST calculations,
   e-invoice/e-way payload validation, physical counts, return flows, and
   maker-checker approvals.
-- 63 frontend tests, frontend type-check, production build, API image build,
+- 65 frontend tests, frontend type-check, production build, API image build,
   and web image build pass.
 - The year-volume query harness passes its defined budgets.
 - Customer, grey, and dyeing returns are held until an independent accountant
