@@ -1,0 +1,378 @@
+import React, { useState } from 'react';
+import { ToolbarRibbon } from '../components/ToolbarRibbon';
+import { useApi } from '../lib/useApi';
+import { api } from '../lib/api';
+import type { LedgerRow, PieceRow } from '../lib/api';
+import { QrCode, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react';
+import { enqueue, isOnline } from '../lib/offlineQueue';
+
+/**
+ * Issue-to-dyeing and dispatch are the same interaction — pick a counterparty,
+ * scan pieces, post — so they are one screen with two specs rather than two
+ * near-identical modules.
+ */
+type Kind = 'issue' | 'dispatch' | 'pack' | 'grey_return' | 'dyeing_return' | 'customer_return' | 'write_off';
+
+interface Spec {
+  title: string;
+  path: string;
+  /** null when the document has no counterparty, as cut/pack does not. */
+  partyLabel: string | null;
+  eligibleStatuses: string[];
+  needsRate: boolean;
+  needsInvoice?: boolean;
+  needsReason?: boolean;
+  counterpartyNatures: string[];
+}
+
+const SPECS: Record<Kind, Spec> = {
+  grey_return: {
+    title: 'Grey Return to Weaver',
+    path: '/grey-returns',
+    partyLabel: 'Weaver',
+    eligibleStatuses: ['grey_in_stock'],
+    needsRate: false,
+    needsReason: true,
+    counterpartyNatures: ['sundry_creditor_raw']
+  },
+  dyeing_return: {
+    title: 'Defective Return to Process House',
+    path: '/dyeing-returns',
+    partyLabel: 'Process House',
+    eligibleStatuses: ['received_finish'],
+    needsRate: false,
+    needsReason: true,
+    counterpartyNatures: ['sundry_creditor_process']
+  },
+  issue: {
+    title: 'Issue To Dyeing (Job Order Challan)',
+    path: '/dyeing-issues',
+    partyLabel: 'Process House',
+    eligibleStatuses: ['grey_in_stock'],
+    needsRate: true,
+    counterpartyNatures: ['sundry_creditor_process']
+  },
+
+  write_off: {
+    title: 'Write-off / Damage',
+    path: '/write-offs',
+    partyLabel: null,
+    eligibleStatuses: ['grey_in_stock', 'received_finish'],
+    needsRate: false,
+    needsReason: true,
+    counterpartyNatures: []
+  },
+  customer_return: {
+    title: 'Customer Return',
+    path: '/customer-returns',
+    partyLabel: 'Customer',
+    eligibleStatuses: ['dispatched'],
+    needsRate: false,
+    needsInvoice: true,
+    needsReason: true,
+    counterpartyNatures: ['sundry_debtor_finish']
+  },
+  dispatch: {
+    title: 'Dispatch / Delivery Challan',
+    path: '/dispatches',
+    partyLabel: 'Customer',
+    eligibleStatuses: ['received_finish', 'cut_packed'],
+    needsRate: true,
+    counterpartyNatures: ['sundry_debtor_finish']
+  },
+  pack: {
+    title: 'Cut / Pack',
+    path: '/cut-pack',
+    partyLabel: null,
+    eligibleStatuses: ['received_finish'],
+    needsRate: false,
+    counterpartyNatures: []
+  }
+};
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+interface Line { barcode: string; quality: string; qty: number; rate: number }
+
+export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
+  const spec = SPECS[kind];
+  const [partyId, setPartyId] = useState('');
+  const [invoiceId, setInvoiceId] = useState('');
+  const [challanNo, setChallanNo] = useState('');
+  const [challanDate, setChallanDate] = useState(today());
+  const [reason, setReason] = useState('');
+  const [rate, setRate] = useState(kind === 'issue' ? 18 : 72);
+  const [lines, setLines] = useState<Line[]>([]);
+  const [scan, setScan] = useState('');
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const ledgers = useApi<LedgerRow[]>('/ledgers');
+  const controls = useApi<{ id: string; nature: string }[]>('/control-accounts');
+  const eligible = useApi<PieceRow[]>(
+    `/pieces?status=${spec.eligibleStatuses.join(',')}&limit=100000`
+  );
+
+  const allowedControlIds = new Set(
+    (controls.data ?? []).filter(c => spec.counterpartyNatures.includes(c.nature)).map(c => c.id)
+  );
+  const parties = (ledgers.data ?? []).filter(l => allowedControlIds.has(l.control_account_id));
+  const invoices = useApi<{ rows: { id: string; invoice_no: string; party_id: string; status: string }[] }>('/sales-invoices?limit=100000');
+  const partyInvoices = (invoices.data?.rows ?? []).filter(i => i.party_id === partyId && i.status === 'approved');
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const add = (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = scan.trim();
+    if (!code) return;
+    setScan('');
+    if (lines.some(l => l.barcode === code)) {
+      setNotice(`${code} is already on this challan`);
+      return;
+    }
+    const piece = (eligible.data ?? []).find(p => p.barcode === code);
+    if (!piece) {
+      setNotice(`${code} is not available for this document`);
+      return;
+    }
+    setNotice(null);
+    setLines(prev => [...prev, {
+      barcode: piece.barcode, quality: piece.quality, qty: piece.current_qty, rate
+    }]);
+  };
+
+  const save = async () => {
+    const missing = [
+      lines.length === 0 ? 'scan at least one piece' : '',
+      spec.partyLabel && !partyId ? `pick a ${spec.partyLabel.toLowerCase()}` : '',
+      kind !== 'write_off' && kind !== 'pack' && !challanNo ? 'enter a challan number' : '',
+      spec.needsInvoice && !invoiceId ? 'select the original invoice' : '',
+      spec.needsReason && !reason.trim() ? 'enter the reason' : '',
+    ].filter(Boolean);
+    if (missing.length) {
+      setNotice(missing.join(', '));
+      return;
+    }
+
+    const body = kind === 'issue'
+      ? {
+          processHouseId: partyId, entryDate: challanDate, challanNo, challanDate,
+          lotNo: '', jobRate: rate, barcodes: lines.map(l => l.barcode)
+        }
+
+      : kind === 'customer_return'
+      ? {
+          customerId: partyId, againstInvoiceId: invoiceId, entryDate: challanDate, challanNo, reason: reason.trim(),
+          lines: lines.map(l => ({ barcode: l.barcode, qty: l.qty }))
+        }
+      : kind === 'grey_return'
+      ? {
+          weaverId: partyId, entryDate: challanDate, challanNo, challanDate, reason: reason.trim(),
+          lines: lines.map(l => ({ barcode: l.barcode, qty: l.qty }))
+        }
+      : kind === 'dyeing_return'
+      ? {
+          processHouseId: partyId, entryDate: challanDate, challanNo, challanDate, reason: reason.trim(),
+          lines: lines.map(l => ({ barcode: l.barcode, qty: l.qty }))
+        }
+      : kind === 'write_off'
+      ? {
+          entryDate: challanDate, reason: reason.trim(),
+          lines: lines.map(l => ({ barcode: l.barcode }))
+        }
+      : kind === 'pack'
+        ? { barcodes: lines.map(l => l.barcode), note: challanNo }
+        : {
+            partyId, challanNo, challanDate,
+            lines: lines.map(l => ({ barcode: l.barcode, rate: l.rate }))
+          };
+
+    // A dropped signal must not lose the scan; queue it and flush on reconnect.
+    if (!isOnline()) {
+      await enqueue(spec.path, body);
+      setNotice(`No network — ${lines.length} piece(s) queued and will post when the signal returns`);
+      setLines([]);
+      setChallanNo('');
+      setReason('');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      const out = await api.post<any>(spec.path, body);
+      setNotice(
+        out.status === 'pending_approval'
+          ? `${out.entryNo} submitted — awaiting a second approval before stock or accounts move`
+        : kind === 'issue'
+          ? `Challan ${out.entryNo} posted — ${out.pieces} pieces sent out`
+          : kind === 'pack'
+            ? `${out.pieces} pieces packed, ${out.qty} mtr`
+            : `Dispatch ${out.challanNo} posted — ${out.pieces} pieces`
+      );
+      setLines([]);
+      setChallanNo('');
+      setReason('');
+      eligible.reload();
+    } catch (e: any) {
+      if (e.message === 'Failed to fetch' || e.message === 'NetworkError') {
+        await enqueue(spec.path, body);
+        setNotice(`Connection dropped — ${lines.length} piece(s) queued to sync in background`);
+        setLines([]);
+        setChallanNo('');
+        setReason('');
+      } else {
+        setError(e.message || String(e));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const total = lines.reduce((a, l) => ({ qty: a.qty + l.qty, value: a.value + l.qty * l.rate }),
+    { qty: 0, value: 0 });
+
+  return (
+    <div className="flex flex-col h-full bg-[#ecf1f7] text-slate-800 text-xs">
+      <ToolbarRibbon
+        title={spec.title}
+        onSave={save}
+        onNew={() => { setLines([]); setChallanNo(''); setReason(''); setNotice(null); }}
+        onPrint={() => window.print()}
+      />
+
+      {(notice || error) && (
+        <div className={`px-4 py-1.5 flex items-center gap-2 font-semibold ${
+          error ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'
+        }`}>
+          {error ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+          <span>{error ?? notice}</span>
+        </div>
+      )}
+
+      <div className="p-3 flex-1 overflow-y-auto max-w-7xl mx-auto w-full space-y-3">
+        <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-1 md:grid-cols-12 gap-2.5">
+          {spec.partyLabel && (
+            <div className="md:col-span-5">
+              <label className="erp-label block text-red-700 font-bold">* {spec.partyLabel}</label>
+              <select value={partyId} onChange={e => setPartyId(e.target.value)} className="erp-input w-full">
+                <option value="">— select —</option>
+                {parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          )}
+          {kind !== 'write_off' && (
+            <div className={spec.partyLabel ? 'md:col-span-3' : 'md:col-span-8'}>
+            <label className={`erp-label block ${spec.partyLabel ? 'text-red-700 font-bold' : ''}`}>
+              {spec.partyLabel ? '* Challan No.' : 'Packing note'}
+            </label>
+            <input value={challanNo} onChange={e => setChallanNo(e.target.value)}
+                   className="erp-input w-full font-mono"
+                   placeholder={spec.partyLabel ? '' : 'e.g. folded, 4 bales'} />
+            </div>
+          )}
+
+          {spec.needsInvoice && (
+            <div className="md:col-span-2">
+              <label className="erp-label block text-red-700 font-bold">* Against Invoice</label>
+              <select value={invoiceId} onChange={e => setInvoiceId(e.target.value)} className="erp-input w-full">
+                <option value="">— select —</option>
+                {partyInvoices.map(i => <option key={i.id} value={i.id}>{i.invoice_no}</option>)}
+              </select>
+            </div>
+          )}
+
+          {spec.needsReason && (
+            <div className={kind === 'write_off' ? 'md:col-span-8' : 'md:col-span-5'}>
+              <label className="erp-label block text-red-700 font-bold">* Reason</label>
+              <input value={reason} onChange={e => setReason(e.target.value)} maxLength={200}
+                     className="erp-input w-full" placeholder="e.g. defect, damage, wrong colour" />
+            </div>
+          )}
+
+          <div className="md:col-span-2">
+            <label className="erp-label block">Date</label>
+            <input type="date" value={challanDate} onChange={e => setChallanDate(e.target.value)}
+                   className="erp-input w-full" />
+          </div>
+
+          {spec.needsRate && (
+            <div className="md:col-span-2">
+              <label className="erp-label block">
+                {kind === 'issue' ? 'Job Rate ₹' : 'Sale Rate ₹'}
+              </label>
+              <input type="number" step="0.01" value={rate}
+                     onChange={e => setRate(Number(e.target.value))}
+                     className="erp-input w-full font-mono" />
+            </div>
+          )}
+        </div>
+
+        <form onSubmit={add} className="bg-white rounded border border-[#b8c9dd] p-3 flex items-center gap-2">
+          <QrCode className="w-4 h-4 text-blue-700" />
+          <label className="font-bold text-blue-900" htmlFor="scan">Scan barcode</label>
+          <input id="scan" autoFocus value={scan} onChange={e => setScan(e.target.value)}
+                 placeholder="scan or type, then Enter" className="erp-input font-mono w-64" />
+          <span className="text-slate-500">
+            {(eligible.data ?? []).length} pieces eligible
+          </span>
+        </form>
+
+        <div className="bg-white rounded border border-[#b8c9dd] overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-slate-100 border-b border-slate-300 text-left">
+              <tr>
+                <th className="px-2 py-1.5 font-bold">Sno</th>
+                <th className="px-2 py-1.5 font-bold">Barcode</th>
+                <th className="px-2 py-1.5 font-bold">Quality</th>
+                <th className="px-2 py-1.5 font-bold text-right">Qty</th>
+                {spec.needsRate && <>
+                  <th className="px-2 py-1.5 font-bold text-right">Rate</th>
+                  <th className="px-2 py-1.5 font-bold text-right">Amount</th>
+                </>}
+                <th className="px-2 py-1.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.length === 0 && (
+                <tr><td colSpan={spec.needsRate ? 7 : 5} className="px-2 py-6 text-center text-slate-400">
+                  Scan a barcode to begin
+                </td></tr>
+              )}
+              {lines.map((l, i) => (
+                <tr key={l.barcode} className="border-b border-slate-100">
+                  <td className="px-2 py-1">{i + 1}</td>
+                  <td className="px-2 py-1 font-mono text-blue-800">{l.barcode}</td>
+                  <td className="px-2 py-1">{l.quality}</td>
+                  <td className="px-2 py-1 text-right font-mono">{l.qty.toFixed(2)}</td>
+                  {spec.needsRate && <>
+                    <td className="px-2 py-1 text-right font-mono">{l.rate.toFixed(2)}</td>
+                    <td className="px-2 py-1 text-right font-mono">₹{(l.qty * l.rate).toFixed(2)}</td>
+                  </>}
+                  <td className="px-2 py-1 text-right">
+                    <button onClick={() => setLines(prev => prev.filter((_, j) => j !== i))}
+                            title="Remove line" className="text-red-600 hover:text-red-800">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="bg-slate-50 border-t border-slate-300 px-3 py-2 flex items-center justify-end gap-6 font-bold">
+            <span>Pieces: {lines.length}</span>
+            <span>Qty: {total.qty.toFixed(2)}</span>
+            {spec.needsRate
+              ? <span>Value: ₹{total.value.toFixed(2)}</span>
+              : <span className="text-slate-600">Value is taken from the locked stock or original invoice</span>}
+            <button onClick={save} disabled={busy}
+                    className="erp-btn erp-btn-primary font-bold disabled:opacity-60">
+              {busy ? 'Posting…' : 'Post Challan'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

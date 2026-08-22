@@ -1,0 +1,61 @@
+# The whole system on one machine: database, API, web.
+#
+#   cp .env.example .env && edit it        # secrets do not live in this file
+#   docker compose up -d --build
+#   docker compose exec -T db psql -U postgres -d linkerp < /dev/null   # ready?
+#   ./scripts/migrate.sh                   # schema and seed
+#
+# Then http://localhost:8080.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-linkerp}
+      # A mill in India reads its own dates and sorts its own names.
+      LANG: en_IN.utf8
+      TZ: Asia/Kolkata
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./link-erp/db:/db:ro
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-linkerp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Not published: nothing outside this network has business reaching it.
+    expose:
+      - "5432"
+
+  api:
+    build: ./server
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://link_erp_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}@db:5432/${POSTGRES_DB:-linkerp}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      FORCE_HTTPS: ${FORCE_HTTPS:-false}
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      TZ: Asia/Kolkata
+    expose:
+      - "4000"
+
+  web:
+    build:
+      context: ./link-erp
+      args:
+        VITE_API_BASE: /api-proxy
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  db-data:

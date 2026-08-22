@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  box-sizing: border-box;
+}
+
+.mono-font {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+.erp-btn {
+  padding: 0.25rem 0.65rem;
+  background-image: linear-gradient(to bottom, #ffffff, #f1f5f9);
+  border: 1px solid #cbd5e1;
+  border-radius: 0.25rem;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  font-weight: 500;
+  color: #334155;
+  transition: all 0.15s ease-in-out;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  cursor: pointer;
+}
+.erp-btn:hover {
+  border-color: #3b82f6;
+  background-image: linear-gradient(to bottom, #eff6ff, #dbeafe);
+}
+.erp-btn:active {
+  transform: translateY(1px);
+}
+
+/* .erp-btn paints a gradient background-image, which hides any bg-* utility. */
+.erp-btn-primary,
+.erp-btn-primary:hover {
+  background-image: none;
+  background-color: #059669;
+  border-color: #047857;
+  color: #ffffff;
+}
+.erp-btn-primary:hover {
+  background-color: #047857;
+}
+
+.erp-input {
+  padding: 0.25rem 0.5rem;
+  background-color: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.25rem;
+  color: #0f172a;
+  font-size: 0.75rem;
+}
+.erp-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #3b82f6;
+}
+
+.erp-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 0.125rem;
+}
+
+/* ------------------------------------------------------------------ print --
+   Screens are not documents. Everything that is not the printable area is
+   removed, so a tax invoice or a label sheet comes out of the printer looking
+   like a tax invoice or a label sheet.                                       */
+
+.print-only { display: none; }
+
+@media print {
+  @page { size: A4; margin: 12mm; }
+
+  body { background: #fff !important; }
+
+  .no-print,
+  .erp-btn,
+  nav, aside { display: none !important; }
+
+  .print-only { display: block; }
+
+  /* The document takes over the page rather than sitting inside app chrome. */
+  .print-area {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    background: #fff;
+    color: #000;
+    font-size: 11pt;
+  }
+
+  .print-area table { width: 100%; border-collapse: collapse; }
+  .print-area th,
+  .print-area td { border: 1px solid #000; padding: 3pt 5pt; }
+  .print-area thead { display: table-header-group; }
+  .print-area tr { break-inside: avoid; }
+
+  .page-break { break-after: page; }
+
+  a[href]::after { content: ''; }
+}
+
+/* Label sheets: fixed physical sizes so a thermal or A4 sheet lines up. */
+.label-sheet {
+  display: grid;
+  grid-template-columns: repeat(3, 65mm);
+  gap: 4mm;
+}
+
+.label {
+  width: 65mm;
+  height: 35mm;
+  border: 1px dashed #cbd5e1;
+  padding: 2mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  break-inside: avoid;
+}
+
+@media print {
+  .label { border: none; }
+  .label-sheet { gap: 0; }
+}
