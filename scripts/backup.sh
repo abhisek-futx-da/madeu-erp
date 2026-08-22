@@ -17,11 +17,13 @@ DB="${POSTGRES_DB:-linkerp}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 FILE="${OUT}/${DB}-${STAMP}.dump"
 
+[[ "${DB}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "invalid database name" >&2; exit 1; }
+
 mkdir -p "${OUT}"
 
 # -Fc is the custom format: compressed, and pg_restore can pull a single table
 # out of it, which is what you actually want at 2am.
-if docker compose -f "${HERE}/docker-compose.yml" ps db --status running >/dev/null 2>&1; then
+if [ -z "${PGHOST:-}" ] && docker compose -f "${HERE}/docker-compose.yml" ps db --status running >/dev/null 2>&1; then
   docker compose -f "${HERE}/docker-compose.yml" exec -T db \
     pg_dump -U postgres -d "${DB}" -Fc > "${FILE}"
 else
@@ -29,7 +31,12 @@ else
 fi
 
 # A backup nobody checked is a backup nobody has. Verify the archive lists.
-if ! pg_restore --list "${FILE}" > /dev/null 2>&1; then
+if [ -z "${PGHOST:-}" ] && docker compose -f "${HERE}/docker-compose.yml" ps db --status running >/dev/null 2>&1; then
+  verify_archive() { cat "${FILE}" | docker compose -f "${HERE}/docker-compose.yml" exec -T db pg_restore --list > /dev/null; }
+else
+  verify_archive() { pg_restore --list "${FILE}" > /dev/null; }
+fi
+if ! verify_archive 2>/dev/null; then
   echo "FAILED: ${FILE} is not a readable archive" >&2
   rm -f "${FILE}"
   exit 1

@@ -67,6 +67,9 @@ jobs:
           echo "recorded=$n files=$files"
           test "$n" = "$files"
 
+      - name: Backup restores into a separate database
+        run: POSTGRES_DB=linkerp_test ./scripts/verify-backup-restore.sh
+
       # A foreign key is covered when it leads an index, or when it follows
       # tenant_id — every query here is tenant-scoped, so that composite is the
       # one the planner actually wants. Audit columns are exempt: nothing scans

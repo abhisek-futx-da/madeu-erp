@@ -125,7 +125,7 @@ export const App: React.FC = () => {
         {activeModule === 'purchase_invoices' && <PurchaseInvoiceView />}
         {activeModule === 'gst_notes' && <GstNoteView />}
         {activeModule in REPORTS && (
-          <LiveReportView report={activeModule as keyof typeof REPORTS} />
+          <LiveReportView report={activeModule as keyof typeof REPORTS} onOpen={setActiveModule} />
         )}
       </div>
       </ErrorBoundary>

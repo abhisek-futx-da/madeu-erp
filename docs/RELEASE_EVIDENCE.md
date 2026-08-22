@@ -8,16 +8,21 @@ not a CA opinion, a mill acceptance, or a government integration result.
 
 ## What was verified from a clean database build
 
-- 40 schema migrations applied and recorded.
+- 30 schema migrations applied and recorded.
 - 14 database invariants passed.
 - 241 server tests passed, including tenant isolation, concurrent scans and
   numbering, double-entry balancing, GST calculation, returns, cancellation,
   physical stock count, and maker-checker approvals.
-- 63 frontend tests passed; the frontend typecheck and production build passed.
+- 65 frontend tests passed; the frontend typecheck and production build passed.
 - The API and web container images built successfully.
 - Browser sessions use HttpOnly, SameSite=Strict cookies; the web application
   does not persist an access token in browser storage, and logout revokes a
   replayed session as well as clearing the cookie.
+- A restore drill is automated: a fresh backup must restore into a separate
+  database and pass migration, tenant, and double-entry balance checks.
+- A first-day dashboard guides a new mill through masters, grey inward,
+  job-work issue/receipt, and dispatch/invoicing. Empty reports now explain
+  which real document is missing and link to its workflow.
 - The year-volume harness met every defined query budget with 150,000 pieces,
   465,000 movement records, 3,000 invoices, and 10,500 invoice lines.
 

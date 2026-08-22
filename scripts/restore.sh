@@ -13,9 +13,29 @@ set -euo pipefail
 FILE="${1:?usage: restore.sh <dump-file> [target-db]}"
 TARGET="${2:-linkerp_restore_check}"
 DB_LIVE="${POSTGRES_DB:-linkerp}"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
 
 [ -f "${FILE}" ] || { echo "no such file: ${FILE}" >&2; exit 1; }
-pg_restore --list "${FILE}" > /dev/null || { echo "not a readable archive" >&2; exit 1; }
+# Database names are interpolated only where PostgreSQL cannot parameterise an
+# identifier. Refuse anything except an ordinary identifier before doing so.
+[[ "${TARGET}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "invalid target database name" >&2; exit 1; }
+[[ "${DB_LIVE}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "invalid live database name" >&2; exit 1; }
+
+# Use the compose database when that is the active deployment.  CI and local
+# test stacks set PGHOST, so they use their explicitly selected Postgres.
+if [ -z "${PGHOST:-}" ] && docker compose -f "${HERE}/docker-compose.yml" ps db --status running >/dev/null 2>&1; then
+  PSQL=(docker compose -f "${HERE}/docker-compose.yml" exec -T db psql -U postgres)
+  RESTORE=(docker compose -f "${HERE}/docker-compose.yml" exec -T db pg_restore -U postgres)
+  verify_archive() { cat "${FILE}" | "${RESTORE[@]}" --list > /dev/null; }
+  restore_archive() { cat "${FILE}" | "${RESTORE[@]}" -d "${TARGET}" --no-owner --role=postgres; }
+else
+  PSQL=(psql -U postgres)
+  RESTORE=(pg_restore -U postgres)
+  verify_archive() { "${RESTORE[@]}" --list "${FILE}" > /dev/null; }
+  restore_archive() { "${RESTORE[@]}" -d "${TARGET}" --no-owner --role=postgres "${FILE}"; }
+fi
+
+verify_archive || { echo "not a readable archive" >&2; exit 1; }
 
 if [ "${TARGET}" = "${DB_LIVE}" ] && [ "${CONFIRM:-}" != "yes" ]; then
   cat >&2 <<MSG
@@ -31,15 +51,15 @@ MSG
 fi
 
 echo "==> recreating ${TARGET}"
-psql -q -U postgres -d postgres \
+"${PSQL[@]}" -q -d postgres \
   -c "drop database if exists ${TARGET};" \
   -c "create database ${TARGET};"
 
 echo "==> restoring"
-pg_restore -U postgres -d "${TARGET}" --no-owner --role=postgres "${FILE}"
+restore_archive
 
 echo "==> checking the restore is usable"
-psql -q -U postgres -d "${TARGET}" -v ON_ERROR_STOP=1 <<'SQL'
+"${PSQL[@]}" -q -d "${TARGET}" -v ON_ERROR_STOP=1 <<'SQL'
 select 'migrations recorded: ' || count(*) from schema_migration;
 select 'tenants: ' || count(*) from tenant;
 set app.tenant_id = '11111111-1111-1111-1111-111111111111';

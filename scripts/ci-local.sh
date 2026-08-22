@@ -59,6 +59,9 @@ step "no navigable foreign key left unindexed" bash -c '
   echo "unindexed: ${missing:-none}"
   [ -z "$missing" ]'
 
+step "backup restores into a separate database" \
+                              bash -c "cd '${ROOT}' && POSTGRES_DB=linkerp_test ./scripts/verify-backup-restore.sh"
+
 # ------------------------------------------------------------------- web --
 
 step "web: install"    bash -c "cd '${ROOT}/link-erp' && npm ci --silent"

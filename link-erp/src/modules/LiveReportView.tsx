@@ -14,6 +14,27 @@ interface ReportSpec {
   columns: { key: string; label: string; align?: 'right'; format?: (v: any) => string }[];
 }
 
+interface EmptyStep { message: string; action: string; module: string }
+
+function emptyStep(report: keyof typeof REPORTS): EmptyStep {
+  if (report === 'gstr1_b2b' || report === 'gstr1_cdnr' || report === 'gstr1_hsn' || report === 'gstr3b' || report === 'gst_liability') {
+    return {
+      message: 'No approved GST documents exist for this period yet.',
+      action: 'Open tax invoices', module: 'sales_invoices'
+    };
+  }
+  if (report === 'stock_summary' || report === 'stock_valuation' || report === 'process_stock' || report === 'barcode_history') {
+    return {
+      message: 'No stock movement has been recorded yet.',
+      action: 'Record grey inward', module: 'grey_inward'
+    };
+  }
+  return {
+    message: 'No completed documents match this report yet.',
+    action: 'Open dashboard', module: 'dashboard'
+  };
+}
+
 const money = (v: any) => (v == null ? '' : `₹${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`);
 const num = (v: any) => (v == null ? '' : Number(v).toFixed(2));
 const pct = (v: any) => (v == null ? '' : `${Number(v).toFixed(2)}%`);
@@ -365,7 +386,10 @@ export const REPORTS: Record<string, ReportSpec> = {
   }
 };
 
-export const LiveReportView: React.FC<{ report: keyof typeof REPORTS }> = ({ report }) => {
+export const LiveReportView: React.FC<{
+  report: keyof typeof REPORTS;
+  onOpen?: (moduleKey: string) => void;
+}> = ({ report, onOpen }) => {
   const spec = REPORTS[report]!;
   const [filter, setFilter] = useState('');
   const { data, error, loading, reload } = useApi<any[]>(spec.path);
@@ -373,6 +397,7 @@ export const LiveReportView: React.FC<{ report: keyof typeof REPORTS }> = ({ rep
   const rows = (data ?? []).filter(r =>
     !filter || Object.values(r).some(v => String(v ?? '').toLowerCase().includes(filter.toLowerCase()))
   );
+  const next = emptyStep(report);
 
   return (
     <div className="flex flex-col h-full bg-[#ecf1f7] text-slate-800 text-xs">
@@ -411,8 +436,13 @@ export const LiveReportView: React.FC<{ report: keyof typeof REPORTS }> = ({ rep
           </thead>
           <tbody>
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={spec.columns.length} className="px-2 py-8 text-center text-slate-400">
-                Nothing to show yet
+              <tr><td colSpan={spec.columns.length} className="px-2 py-8 text-center text-slate-500">
+                <p>{next.message}</p>
+                {onOpen && (
+                  <button onClick={() => onOpen(next.module)} className="erp-btn erp-btn-primary mt-3">
+                    {next.action}
+                  </button>
+                )}
               </td></tr>
             )}
             {rows.map((row, i) => (

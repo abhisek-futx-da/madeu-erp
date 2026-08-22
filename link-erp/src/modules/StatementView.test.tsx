@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StatementView } from './StatementView';
 import { DashboardView } from './DashboardView';
 
@@ -119,5 +119,21 @@ describe('DashboardView', () => {
     await waitFor(() =>
       expect(screen.getByText(/Nothing invoiced yet this year/i)).toBeInTheDocument());
     expect(screen.getByText(/Every bill is settled/i)).toBeInTheDocument();
+  });
+
+  test('a new company is given the real first-day workflow, not a blank dashboard', async () => {
+    const onOpen = vi.fn();
+    mockJson({
+      summary: {
+        sales_today: 0, sales_mtd: 0, sales_ytd: 0, receivables: 0, receivables_overdue: 0,
+        payables: 0, cash_and_bank: 0, stock_value: 0, stock_pieces: 0,
+        pieces_at_dyeing: 0, qty_at_dyeing: 0, invoices_awaiting_irn: 0,
+        challans_beyond_one_year: 0, overdue_orders: 0
+      }, trend: [], topDebtors: []
+    });
+    render(<DashboardView onOpen={onOpen} />);
+    await waitFor(() => expect(screen.getByText(/Start your first working day/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Record grey inward/i }));
+    expect(onOpen).toHaveBeenCalledWith('grey_inward');
   });
 });
