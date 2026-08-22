@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push supersedes the first; nobody needs a queue of stale runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: server — types, schema, tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      JWT_SECRET: ci-only-secret-not-used-anywhere-real
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - run: npm ci
+        working-directory: server
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: server
+
+      # Builds the schema from scratch, runs the ten database invariants, then
+      # the whole API suite against it. A run that depends on leftover data is
+      # not a test run.
+      - name: Tests on a database built from scratch
+        run: ./test/run.sh
+        working-directory: server
+
+      - name: Every migration is recorded
+        run: |
+          n=$(psql -d linkerp_test -tAc "select count(*) from schema_migration" | tr -d ' ')
+          files=$(find link-erp/db -maxdepth 1 -name '0*.sql' \
+                    | grep -vE '00[23]_|seed' | wc -l | tr -d ' ')
+          echo "recorded=$n files=$files"
+          test "$n" = "$files"
+
+      # A foreign key is covered when it leads an index, or when it follows
+      # tenant_id — every query here is tenant-scoped, so that composite is the
+      # one the planner actually wants. Audit columns are exempt: nothing scans
+      # by them and users are deactivated rather than deleted.
+      - name: No navigable foreign key left unindexed
+        run: |
+          psql -d linkerp_test -tAc "
+            select coalesce(string_agg(fk, ', '), '')
+              from (
+                select c.conrelid::regclass::text || '.' || a.attname as fk
+                  from pg_constraint c
+                  join pg_attribute a
+                    on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
+                 where c.contype = 'f'
+                   and c.connamespace = 'public'::regnamespace
+                   and a.attname not in
+                       ('created_by','closed_by','filed_by','reopened_by','approved_by')
+                   and not exists (
+                     select 1 from pg_index i
+                      where i.indrelid = c.conrelid
+                        and (i.indkey[0] = c.conkey[1]
+                             or (i.indkey[1] = c.conkey[1]
+                                 and i.indkey[0] = (select attnum from pg_attribute
+                                                     where attrelid = c.conrelid
+                                                       and attname = 'tenant_id'))))
+              ) missing
+          " | tee /tmp/fk
+          test -z "$(cat /tmp/fk | tr -d ' ')" || { echo "unindexed: $(cat /tmp/fk)"; exit 1; }
+
+      # Every performance claim used to rest on a demo database of two thousand
+      # pieces. This builds a year of a working mill and fails if a query a
+      # person waits on crosses its budget.
+      - name: Queries stay fast at a year's volume
+        run: ./load/run.sh
+        working-directory: link-erp/db
+
+      - name: API log on failure
+        if: failure()
+        run: tail -100 /tmp/link-erp-test-api.log || true
+
+  web:
+    name: web — types, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: link-erp/package-lock.json
+      - run: npm ci
+        working-directory: link-erp
+      - run: npm run typecheck
+        working-directory: link-erp
+      - run: npm test
+        working-directory: link-erp
+      - run: npm run build
+        working-directory: link-erp
+
+  images:
+    name: containers build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t link-erp-api ./server
+      - run: docker build -t link-erp-web ./link-erp

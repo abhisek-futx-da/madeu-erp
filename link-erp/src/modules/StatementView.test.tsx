@@ -1,0 +1,123 @@
+import { describe, test, expect, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import { StatementView } from './StatementView';
+import { DashboardView } from './DashboardView';
+
+/**
+ * A balance sheet that silently does not balance is worse than none: it looks
+ * authoritative. The server sends a `difference`; this screen must say so
+ * loudly when it is not zero, and stay quiet when it is.
+ */
+
+function mockJson(body: unknown) {
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true, status: 200, headers: new Headers(),
+    text: async () => JSON.stringify(body)
+  } as unknown as Response)));
+}
+
+const BALANCED = {
+  asOn: '2027-03-31',
+  rows: [
+    { section: 'asset', code: '960', name: 'Grey Stock', control_account: 'Current Assets - Stock', amount: 5643000 },
+    { section: 'liability', code: '105', name: 'L.R. Textiles', control_account: 'Creditors For Grey', amount: 6980113.8 },
+    { section: 'equity', code: '999', name: 'Loss for the period', control_account: 'Reserves & Surplus', amount: -1337113.8 }
+  ],
+  totals: { assets: 5643000, liabilities: 6980113.8, equity: -1337113.8, difference: 0 }
+};
+
+describe('StatementView — balance sheet', () => {
+  test('renders both sides with their totals', async () => {
+    mockJson(BALANCED);
+    render(<StatementView kind="balance_sheet" />);
+
+    await waitFor(() => expect(screen.getByText('Grey Stock')).toBeInTheDocument());
+    expect(screen.getByText('Liabilities & Equity')).toBeInTheDocument();
+    expect(screen.getByText('Assets')).toBeInTheDocument();
+    // Inventory belongs on the asset side, which is the classification bug the
+    // audit found and this pins down.
+    expect(screen.getByText('Current Assets - Stock')).toBeInTheDocument();
+  });
+
+  test('says nothing about balance when it balances', async () => {
+    mockJson(BALANCED);
+    render(<StatementView kind="balance_sheet" />);
+    await waitFor(() => expect(screen.getByText('Grey Stock')).toBeInTheDocument());
+    expect(screen.queryByText(/out of balance/i)).toBeNull();
+  });
+
+  test('shouts when the two sides disagree', async () => {
+    mockJson({ ...BALANCED, totals: { ...BALANCED.totals, difference: 2443989.4 } });
+    render(<StatementView kind="balance_sheet" />);
+    await waitFor(() =>
+      expect(screen.getByText(/out of balance by/i)).toBeInTheDocument());
+    expect(screen.getByText(/books need attention/i)).toBeInTheDocument();
+  });
+
+  test('a loss is labelled a loss, not a negative profit', async () => {
+    mockJson({
+      from: '2026-04-01', to: '2027-03-31',
+      rows: [
+        { section: 'income', code: '901', name: 'Trading Sales', control_account: 'Sales', amount: 727184 },
+        { section: 'expense', code: '900', name: 'Trading Purchase', control_account: 'Purchases', amount: 1221994.7 }
+      ],
+      totals: { income: 727184, expense: 1221994.7, netProfit: -494810.7 }
+    });
+    render(<StatementView kind="profit_loss" />);
+    await waitFor(() => expect(screen.getByText(/Net Loss/)).toBeInTheDocument());
+    // Shown as a positive magnitude beside the word "Loss", not "-494810.70".
+    expect(screen.getByText(/₹ 4,94,810.70/)).toBeInTheDocument();
+  });
+});
+
+describe('DashboardView', () => {
+  const SUMMARY = {
+    summary: {
+      sales_today: 0, sales_mtd: 740904, sales_ytd: 740904,
+      receivables: 697721, receivables_overdue: 25000, payables: 620505,
+      cash_and_bank: 90465, stock_value: 6238432.7, stock_pieces: 2058,
+      pieces_at_dyeing: 1809, qty_at_dyeing: 180900,
+      invoices_awaiting_irn: 63, challans_beyond_one_year: 2, overdue_orders: 0
+    },
+    trend: [{ month: '2026-09', taxable_value: 740904, invoices: 63 }],
+    topDebtors: [
+      { party: 'Supreme Textile', code: '701', outstanding: 550159,
+        overdue: 25000, worst_overdue_days: 12, bills: 48 }
+    ]
+  };
+
+  test('reports lakhs and crores the way an owner reads them', async () => {
+    mockJson(SUMMARY);
+    render(<DashboardView />);
+    await waitFor(() => expect(screen.getByText(/62.38 L/)).toBeInTheDocument());
+    expect(screen.getByText(/6.98 L overdue|₹ 6.98 L/)).toBeTruthy();
+  });
+
+  test('flags job work past the twelve-month limit as a problem, not a statistic', async () => {
+    mockJson(SUMMARY);
+    render(<DashboardView />);
+    await waitFor(() =>
+      expect(screen.getByText(/ITC reverses after twelve months/i)).toBeInTheDocument());
+    const tile = screen.getByText(/JOB WORK PAST 1 YEAR/i).closest('div')!.parentElement!;
+    expect(tile.className).toMatch(/red/);
+  });
+
+  test('a clean position is not dressed up as an alarm', async () => {
+    mockJson({
+      ...SUMMARY,
+      summary: { ...SUMMARY.summary, challans_beyond_one_year: 0, receivables_overdue: 0 }
+    });
+    render(<DashboardView />);
+    await waitFor(() => expect(screen.getByText(/nothing overdue/i)).toBeInTheDocument());
+    const tile = screen.getByText(/JOB WORK PAST 1 YEAR/i).closest('div')!.parentElement!;
+    expect(tile.className).toMatch(/emerald/);
+  });
+
+  test('an empty year says so rather than drawing an empty chart', async () => {
+    mockJson({ ...SUMMARY, trend: [], topDebtors: [] });
+    render(<DashboardView />);
+    await waitFor(() =>
+      expect(screen.getByText(/Nothing invoiced yet this year/i)).toBeInTheDocument());
+    expect(screen.getByText(/Every bill is settled/i)).toBeInTheDocument();
+  });
+});

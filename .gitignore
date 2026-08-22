@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+backups/*.dump
+backups/*.sql.gz
+coverage/
+
+# Local screenshots and one-off repair helpers are not deployable ERP source.
+Screenshot *.png
+.claude/
+fix*.js
+patch_*.js
+get_pieces.js
+test-flow.js
