@@ -45,10 +45,10 @@ not a CA opinion, a mill acceptance, or a government integration result.
 4. **GSTR-1 edge cases:** the product exposes the registered-recipient
    credit/debit-note register; unregistered/export classification must be
    agreed with the CA before filing.
-5. **Release governance:** this directory has no version-control history or
-   immutable release tag. Before review, place the exact reviewed source and
-   database migration set under version control and identify the release by a
-   commit/tag.
+5. **Release governance:** the reviewed source is now in local Git and tagged
+   as a pilot release candidate. Before the CA review, push that exact tag to
+   an access-controlled remote repository and preserve a second, independent
+   backup; a laptop-only history is not sufficient business continuity.
 
 The controlled-pilot routine, CA questions, and live-integration conditions are
 in `CA_REVIEW_AND_MILL_PILOT.md` and `GSP_IRP_READINESS.md`.
