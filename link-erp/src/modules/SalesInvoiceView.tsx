@@ -4,7 +4,7 @@ import { useApi, useSubmit } from '../lib/useApi';
 import { usePagedList } from '../lib/usePagedList';
 import { ListControls } from '../components/ListControls';
 import { api, type Page } from '../lib/api';
-import { AlertTriangle, CheckCircle2, FileJson, Printer, Receipt, Truck, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileJson, Printer, Receipt, Truck, X } from 'lucide-react';
 import { InvoicePrintView } from './InvoicePrintView';
 import type { Session } from '../lib/api';
 
@@ -14,7 +14,7 @@ interface InvoiceRow {
   taxable_value: number; cgst_amount: number; sgst_amount: number;
   igst_amount: number; round_off: number; invoice_total: number;
   party_name: string; gstin: string | null; brokerage_amount: number;
-  broker_name: string | null;
+  broker_name: string | null; brokerage_state: 'none' | 'accrued' | 'released' | 'forfeited';
   filing_status: string | null; irn: string | null; last_error: string | null;
   ewb_no: string | null; ewb_ref: string | null;
 }
@@ -81,6 +81,16 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
     } finally {
       setEwayFor(null);
     }
+  };
+
+  const forfeit = async (row: InvoiceRow) => {
+    const reason = prompt(`Why is brokerage on ${row.invoice_no} being forfeited?`);
+    if (!reason?.trim()) return;
+    try {
+      await api.post(`/sales-invoices/${row.id}/brokerage/forfeit`, { reason: reason.trim() });
+      setNotice(`${row.invoice_no}: brokerage forfeited and the accrual was reversed`);
+      invoices.reload();
+    } catch (e) { setNotice(e instanceof Error ? e.message : String(e)); }
   };
 
   return (
@@ -189,7 +199,9 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
                   <td className="px-2 py-1 text-right font-mono">{money(i.sgst_amount)}</td>
                   <td className="px-2 py-1 text-right font-mono">{money(i.igst_amount)}</td>
                   <td className="px-2 py-1 text-right font-mono font-bold">{money(i.invoice_total)}</td>
-                  <td className="px-2 py-1 text-right font-mono" title={i.broker_name ?? undefined}>{i.brokerage_amount > 0 ? money(i.brokerage_amount) : '—'}</td>
+                  <td className="px-2 py-1 text-right font-mono" title={i.broker_name ?? undefined}>{i.brokerage_amount > 0
+                    ? <><span>{money(i.brokerage_amount)}</span><span className="block text-[10px] uppercase">{i.brokerage_state}</span></>
+                    : '—'}</td>
                   <td className="px-2 py-1">
                     <span className={`px-1.5 py-0.5 rounded border font-semibold ${
                       i.irn ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
@@ -203,6 +215,10 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
                     <button onClick={() => setPrinting(i.id)} className="erp-btn" title="Print invoice">
                       <Printer className="w-3.5 h-3.5 text-blue-700" />
                     </button>
+                    <button onClick={() => void api.download(`/sales-invoices/${i.id}/pdf`, `${i.invoice_no}.pdf`)}
+                      className="erp-btn" title="Download invoice, LR and packing list PDF">
+                      <Download className="w-3.5 h-3.5 text-blue-700" />
+                    </button>
                     <button onClick={() => showPayload(i)} className="erp-btn" title="View IRP payload">
                       <FileJson className="w-3.5 h-3.5 text-blue-600" />
                     </button>
@@ -211,6 +227,10 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
                       title={i.ewb_no ? `E-way bill ${i.ewb_no}` : i.ewb_ref ? `E-way bill ${i.ewb_ref} prepared` : 'Prepare e-way bill (Rule 138)'}>
                       <Truck className={`w-3.5 h-3.5 ${i.ewb_ref ? 'text-emerald-600' : 'text-slate-500'}`} />
                     </button>
+                    {session.role === 'owner' && i.brokerage_state === 'accrued' && <button
+                      onClick={() => void forfeit(i)} className="erp-btn text-red-700" title="Forfeit unpaid brokerage">
+                      Forfeit
+                    </button>}
                   </td>
                 </tr>
               ))}

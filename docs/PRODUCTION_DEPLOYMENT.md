@@ -93,7 +93,28 @@ reset.
 Use no shared account, no demo account, and no password in a spreadsheet,
 WhatsApp chat, ticket, screenshot, or source file.
 
-## 5. Start the pilot, not a broad rollout
+## 5. Prove local and messaging integrations
+
+On every godown PC that prints or weighs, install the service described in
+`../hardware-bridge/README.md`. Use a unique pairing token, the exact ERP HTTPS
+origin, and loopback-only bridge URLs. Print and scan a calibration set on the
+actual label stock, then compare scale readings with certified weights. Record
+printer model, DPI, language, label dimensions, scale protocol, baud rate, and
+the accepted samples. Passing the bridge unit tests is not that acceptance.
+
+Keep WhatsApp variables blank until the invoice-document and payment-reminder
+templates have provider approval and each recipient class has a lawful consent
+process. When enabled, send only from the ERP outbox: prove customer and broker
+invoice PDFs, outstanding statements, failed-send backoff, cancellation, and
+duplicate suppression. A provider acceptance ID proves delivery processing;
+it does not prove the recipient read or accepted the books.
+
+Import the Tally XML into a disposable copy of the mill's Tally company. Match
+ledger masters, voucher counts, debit/credit totals, and closing balances. Do
+not import into the live Tally company until the accountant and CA sign that
+reconciliation.
+
+## 6. Start the pilot, not a broad rollout
 
 Follow `CA_REVIEW_AND_MILL_PILOT.md` for the daily reconciliation and exit
 criteria. Keep the existing accounting system in parallel until the CA and

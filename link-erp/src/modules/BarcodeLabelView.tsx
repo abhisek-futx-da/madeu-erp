@@ -4,6 +4,7 @@ import { useApi } from '../lib/useApi';
 import type { PieceRow, Session } from '../lib/api';
 import { code128DataUri } from '../lib/barcode';
 import { Printer, Tag } from 'lucide-react';
+import { printThermal, type ThermalLanguage } from '../lib/hardware';
 
 /**
  * Label printing. The system stamps a barcode on every thaan and until now had
@@ -14,6 +15,8 @@ export const BarcodeLabelView: React.FC<{ session: Session }> = ({ session }) =>
   const [status, setStatus] = useState('grey_in_stock');
   const [lot, setLot] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [language, setLanguage] = useState<ThermalLanguage>('zpl');
+  const [notice, setNotice] = useState<string | null>(null);
 
   const query = `/pieces?status=${status}${lot ? `&lotNo=${encodeURIComponent(lot)}` : ''}&limit=500`;
   const pieces = useApi<PieceRow[]>(query, [status, lot]);
@@ -28,6 +31,20 @@ export const BarcodeLabelView: React.FC<{ session: Session }> = ({ session }) =>
 
   const selected = rows.filter(r => picked.has(r.barcode));
   const toPrint = selected.length > 0 ? selected : rows;
+  const rawPrint = async () => {
+    try {
+      const mode = await printThermal(language, toPrint.map(piece => ({
+        barcode: piece.barcode, mill: session.tenant?.legalName ?? '', quality: piece.quality,
+        grade: piece.grade_code, lot: piece.lot_no, metres: Number(piece.current_qty),
+        kilograms: piece.current_weight_kg == null ? null : Number(piece.current_weight_kg)
+      })));
+      setNotice(mode === 'bridge'
+        ? `${toPrint.length} label(s) sent to the thermal printer`
+        : `${language.toUpperCase()} file downloaded — send it to the configured printer queue`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#ecf1f7] text-slate-800 text-xs">
@@ -53,11 +70,23 @@ export const BarcodeLabelView: React.FC<{ session: Session }> = ({ session }) =>
             : `${rows.length} pieces — printing all`}
         </span>
         <button onClick={() => setPicked(new Set())} className="erp-btn">Clear selection</button>
-        <button onClick={() => window.print()} className="erp-btn erp-btn-primary font-bold ml-auto">
+        <select aria-label="Thermal printer language" value={language}
+                onChange={event => setLanguage(event.target.value as ThermalLanguage)}
+                className="erp-input w-24 ml-auto">
+          <option value="zpl">ZPL</option>
+          <option value="tspl">TSPL</option>
+        </select>
+        <button onClick={rawPrint} className="erp-btn font-bold">
+          <Printer className="w-3.5 h-3.5" />
+          <span>Raw thermal</span>
+        </button>
+        <button onClick={() => window.print()} className="erp-btn erp-btn-primary font-bold">
           <Printer className="w-3.5 h-3.5" />
           <span>Print {toPrint.length} label{toPrint.length === 1 ? '' : 's'}</span>
         </button>
       </div>
+
+      {notice && <div role="status" className="no-print px-3 py-1.5 bg-blue-900 text-white font-semibold">{notice}</div>}
 
       <div className="flex-1 overflow-auto p-3 print-area">
         <div className="label-sheet">
@@ -92,7 +121,7 @@ export const BarcodeLabelView: React.FC<{ session: Session }> = ({ session }) =>
               </div>
               <div className="flex justify-between text-[7pt] text-slate-600">
                 <span>Lot {p.lot_no || '—'}</span>
-                <span>{p.design ?? ''}</span>
+                <span>{p.current_weight_kg == null ? (p.design ?? '') : `${Number(p.current_weight_kg).toFixed(3)} KG`}</span>
               </div>
             </div>
           ))}

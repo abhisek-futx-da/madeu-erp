@@ -51,3 +51,6 @@ The current code has no live provider credentials and no real provider round
 trip. The GSTR-1 credit/debit-note report currently covers registered
 recipients; CA validation must define any required unregistered/export note
 handling before production filing.
+
+WhatsApp Graph credentials and templates are a separate integration boundary;
+passing Meta delivery does not prove any GSP, IRP, NIC, or GST filing result.

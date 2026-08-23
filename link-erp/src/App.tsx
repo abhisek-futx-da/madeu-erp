@@ -35,6 +35,7 @@ import { BankReconciliationView } from './modules/BankReconciliationView';
 import { PurchaseOrderView } from './modules/PurchaseOrderView';
 import { ReprocessView } from './modules/ReprocessView';
 import { PackingListView } from './modules/PackingListView';
+import { MillIntegrationView } from './modules/MillIntegrationView';
 
 import { auth, type Session } from './lib/api';
 import { clearApiCache } from './lib/useApi';
@@ -161,6 +162,7 @@ export const App: React.FC = () => {
       {module === 'sales_orders' && <SalesOrderView />}
       {module === 'year_close' && <YearCloseView />}
       {module === 'payments' && <PaymentView />}
+      {module === 'mill_integrations' && <MillIntegrationView />}
       {module === 'bank_reconciliation' && <BankReconciliationView session={session} />}
       {module === 'audit_trail' && <AuditTrailView />}
       {module === 'labels' && <BarcodeLabelView session={session} />}

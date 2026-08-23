@@ -111,6 +111,9 @@ export const AuditTrailView: React.FC = () => {
               <Field label="Stage" value={stage(p.status)} />
               <Field label="Grey qty" value={`${Number(p.grey_qty).toFixed(2)} MTR`} mono />
               <Field label="Now" value={`${Number(p.current_qty).toFixed(2)} MTR`} mono />
+              <Field label="Weight" value={p.current_weight_kg == null ? 'Not captured' : `${Number(p.current_weight_kg).toFixed(3)} KG`} mono />
+              <Field label="GLM" value={p.glm == null ? '—' : `${Number(p.glm).toFixed(3)} g/m`} mono />
+              <Field label="GSM" value={p.gsm == null ? '—' : Number(p.gsm).toFixed(2)} mono />
               {p.held_by && <Field label="Lying with" value={p.held_by} />}
             </div>
           </div>
@@ -128,6 +131,8 @@ export const AuditTrailView: React.FC = () => {
                   <th className="px-2 py-1.5 font-bold">To</th>
                   <th className="px-2 py-1.5 font-bold text-right">Qty before</th>
                   <th className="px-2 py-1.5 font-bold text-right">Qty after</th>
+                  <th className="px-2 py-1.5 font-bold text-right">Kg before</th>
+                  <th className="px-2 py-1.5 font-bold text-right">Kg after</th>
                   <th className="px-2 py-1.5 font-bold">Counterparty</th>
                   <th className="px-2 py-1.5 font-bold">Document</th>
                 </tr>
@@ -149,6 +154,8 @@ export const AuditTrailView: React.FC = () => {
                         {Number(m.qty_after).toFixed(2)}
                         {lost > 0.005 && <span className="ml-1 text-[10px]">(−{lost.toFixed(2)})</span>}
                       </td>
+                      <td className="px-2 py-1 text-right font-mono">{m.weight_before_kg == null ? '—' : Number(m.weight_before_kg).toFixed(3)}</td>
+                      <td className="px-2 py-1 text-right font-mono">{m.weight_after_kg == null ? '—' : Number(m.weight_after_kg).toFixed(3)}</td>
                       <td className="px-2 py-1">{m.counterparty ?? ''}</td>
                       <td className="px-2 py-1 text-slate-500">{m.doc_type}</td>
                     </tr>

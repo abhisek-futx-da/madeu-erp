@@ -53,6 +53,9 @@ step "web: production dependency audit" \
 step "browser: desktop, mobile, accessibility, every module" \
                         bash -c "cd '${ROOT}' && ./scripts/test-browser-local.sh"
 
+step "godown hardware bridge: raw printer safety and loopback pairing" \
+                        bash -c "cd '${ROOT}/hardware-bridge' && npm test"
+
 # ------------------------------------------------------------ containers --
 
 if docker info > /dev/null 2>&1; then

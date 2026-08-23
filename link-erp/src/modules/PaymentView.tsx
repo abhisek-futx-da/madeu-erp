@@ -4,7 +4,7 @@ import { usePagedList } from '../lib/usePagedList';
 import { ListControls } from '../components/ListControls';
 import { useApi, useSubmit } from '../lib/useApi';
 import { api, ApiError, type LedgerRow } from '../lib/api';
-import { AlertTriangle, CheckCircle2, Wallet, Wand2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Wallet, Wand2, XCircle, Plus, Trash2 } from 'lucide-react';
 
 interface PaymentRow {
   id: string; voucher_no: string; kind: 'receipt' | 'payment'; payment_date: string;
@@ -20,6 +20,12 @@ interface Outstanding {
 }
 
 interface Alloc { invoiceId: string; label: string; amount: number }
+interface Deduction {
+  invoiceId: string; label: string;
+  kind: 'cash_discount' | 'quality_discount' | 'rate_difference' | 'shortage' | 'tds' | 'other';
+  amount: number; reason: string;
+  taxTreatment: 'none' | 'credit_note_required' | 'debit_note_required';
+}
 
 const money = (v: number) => `₹${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -39,6 +45,12 @@ export const PaymentView: React.FC = () => {
   const [bankLedgerId, setBankLedgerId] = useState('');
   const [narration, setNarration] = useState('');
   const [allocs, setAllocs] = useState<Alloc[]>([]);
+  const [deductions, setDeductions] = useState<Deduction[]>([]);
+  const [deductionInvoice, setDeductionInvoice] = useState('');
+  const [deductionKind, setDeductionKind] = useState<Deduction['kind']>('cash_discount');
+  const [deductionAmount, setDeductionAmount] = useState(0);
+  const [deductionReason, setDeductionReason] = useState('');
+  const [taxTreatment, setTaxTreatment] = useState<Deduction['taxTreatment']>('none');
   const [notice, setNotice] = useState<string | null>(null);
 
   const ledgers = useApi<LedgerRow[]>('/ledgers');
@@ -55,7 +67,8 @@ export const PaymentView: React.FC = () => {
     .filter(o => o.code === partyCode && Number(o.outstanding) > 0.005);
   const totalDue = partyBills.reduce((n, o) => n + Number(o.outstanding), 0);
   const allocated = allocs.reduce((n, a) => n + a.amount, 0);
-  const onAccount = Math.round((amount + discount - allocated) * 100) / 100;
+  const deducted = deductions.reduce((n, deduction) => n + deduction.amount, 0);
+  const onAccount = Math.round((amount + discount + deducted - allocated) * 100) / 100;
 
   // Money moves between us and a party, never an internal posting account, so
   // the picker offers debtors and creditors only.
@@ -81,7 +94,7 @@ export const PaymentView: React.FC = () => {
     }
     try {
       const out = await api.post<{ allocations: Alloc[]; onAccount: number }>(
-        '/payments/suggest', { partyId, kind, amount: amount + discount });
+        '/payments/suggest', { partyId, kind, amount: amount + discount + deducted });
       setAllocs(out.allocations);
       setNotice(
         out.allocations.length === 0
@@ -99,6 +112,19 @@ export const PaymentView: React.FC = () => {
       return value > 0 ? [...rest, { invoiceId, label, amount: value }] : rest;
     });
 
+  const addDeduction = () => {
+    const bill = partyBills.find(item => item.invoice_id === deductionInvoice);
+    if (!bill || deductionAmount <= 0 || deductionReason.trim().length < 2) {
+      setNotice('choose a bill, amount and a clear deduction reason');
+      return;
+    }
+    setDeductions(current => [...current, {
+      invoiceId: bill.invoice_id, label: bill.invoice_no ?? bill.our_ref ?? '',
+      kind: deductionKind, amount: deductionAmount, reason: deductionReason.trim(), taxTreatment
+    }]);
+    setDeductionAmount(0); setDeductionReason(''); setTaxTreatment('none');
+  };
+
   const save = async () => {
     if (!partyId || amount <= 0) {
       setNotice('pick a party and enter an amount');
@@ -112,6 +138,11 @@ export const PaymentView: React.FC = () => {
       allocations: allocs.map(a => ({
         [kind === 'receipt' ? 'salesInvoiceId' : 'purchaseInvoiceId']: a.invoiceId,
         amount: a.amount
+      })),
+      deductions: deductions.map(deduction => ({
+        [kind === 'receipt' ? 'salesInvoiceId' : 'purchaseInvoiceId']: deduction.invoiceId,
+        kind: deduction.kind, amount: deduction.amount, reason: deduction.reason,
+        taxTreatment: deduction.taxTreatment
       }))
     });
     if (out) {
@@ -120,7 +151,7 @@ export const PaymentView: React.FC = () => {
         (out.allocated > 0 ? `, ${money(out.allocated)} allocated` : '') +
         (out.onAccount > 0 ? `, ${money(out.onAccount)} on account` : '')
       );
-      setAmount(0); setDiscount(0); setInstrumentNo(''); setAllocs([]);
+      setAmount(0); setDiscount(0); setInstrumentNo(''); setAllocs([]); setDeductions([]);
       payments.reload();
       outstanding.reload();
     }
@@ -144,7 +175,7 @@ export const PaymentView: React.FC = () => {
       <ToolbarRibbon
         title={kind === 'receipt' ? 'Receipt (money in)' : 'Payment (money out)'}
         onSave={save}
-        onNew={() => { setAmount(0); setDiscount(0); setAllocs([]); setNotice(null); }}
+        onNew={() => { setAmount(0); setDiscount(0); setAllocs([]); setDeductions([]); setNotice(null); }}
         onExport={() => void payments.exportCsv()}
         onPrint={() => window.print()}
       />
@@ -163,7 +194,7 @@ export const PaymentView: React.FC = () => {
           <div className="md:col-span-2">
             <label htmlFor="payment-type" className="erp-label block text-red-700 font-bold">* Type</label>
             <select id="payment-type" value={kind}
-                    onChange={e => { setKind(e.target.value as 'receipt' | 'payment'); setAllocs([]); }}
+                    onChange={e => { setKind(e.target.value as 'receipt' | 'payment'); setAllocs([]); setDeductions([]); }}
                     className="erp-input w-full">
               <option value="receipt">Receipt — from a customer</option>
               <option value="payment">Payment — to a supplier</option>
@@ -172,7 +203,7 @@ export const PaymentView: React.FC = () => {
           <div className="md:col-span-3">
             <label htmlFor="payment-party" className="erp-label block text-red-700 font-bold">* Party</label>
             <select id="payment-party" value={partyId}
-                    onChange={e => { setPartyId(e.target.value); setAllocs([]); }}
+                    onChange={e => { setPartyId(e.target.value); setAllocs([]); setDeductions([]); }}
                     className="erp-input w-full">
               <option value="">— select —</option>
               {parties.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
@@ -230,6 +261,58 @@ export const PaymentView: React.FC = () => {
                    className="erp-input w-full" />
           </div>
         </div>
+
+        {partyId && partyBills.length > 0 && (
+          <div className="bg-white rounded border border-[#b8c9dd] p-3 space-y-2">
+            <header className="font-bold text-blue-900">Kapat / settlement deductions — each reason posts separately</header>
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+              <select aria-label="Deduction bill" value={deductionInvoice}
+                      onChange={e => setDeductionInvoice(e.target.value)} className="erp-input md:col-span-2">
+                <option value="">— bill —</option>
+                {partyBills.map(bill => <option key={bill.invoice_id} value={bill.invoice_id}>
+                  {bill.invoice_no ?? bill.our_ref}
+                </option>)}
+              </select>
+              <select aria-label="Deduction type" value={deductionKind}
+                      onChange={e => setDeductionKind(e.target.value as Deduction['kind'])}
+                      className="erp-input md:col-span-2">
+                <option value="cash_discount">Cash discount</option>
+                <option value="quality_discount">Quality / shade</option>
+                <option value="rate_difference">Rate difference</option>
+                <option value="shortage">Shortage claim</option>
+                <option value="tds">TDS</option>
+                <option value="other">Other</option>
+              </select>
+              <input aria-label="Deduction amount" type="number" step="0.01" value={deductionAmount || ''}
+                     onChange={e => setDeductionAmount(Number(e.target.value))}
+                     placeholder="Amount" className="erp-input md:col-span-2 text-right font-mono" />
+              <input aria-label="Deduction reason" value={deductionReason}
+                     onChange={e => setDeductionReason(e.target.value)}
+                     placeholder="Reason / claim reference" className="erp-input md:col-span-3" />
+              <select aria-label="GST note treatment" value={taxTreatment}
+                      onChange={e => setTaxTreatment(e.target.value as Deduction['taxTreatment'])}
+                      className="erp-input md:col-span-2">
+                <option value="none">No GST note</option>
+                <option value="credit_note_required">Credit note required</option>
+                <option value="debit_note_required">Debit note required</option>
+              </select>
+              <button type="button" onClick={addDeduction} className="erp-btn md:col-span-1 justify-center">
+                <Plus className="w-3.5 h-3.5" /> Add
+              </button>
+            </div>
+            {deductions.map((deduction, index) => (
+              <div key={`${deduction.invoiceId}-${index}`} className="flex items-center gap-3 bg-slate-50 border px-2 py-1">
+                <span className="font-mono font-bold">{deduction.label}</span>
+                <span>{deduction.kind.replaceAll('_', ' ')}</span>
+                <span className="font-mono">{money(deduction.amount)}</span>
+                <span className="flex-1">{deduction.reason}</span>
+                {deduction.taxTreatment !== 'none' && <span className="text-amber-800 font-bold">GST note pending</span>}
+                <button type="button" onClick={() => setDeductions(current => current.filter((_, i) => i !== index))}
+                        title="Remove deduction" className="text-red-700"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {partyId && (
           <div className="bg-white rounded border border-[#b8c9dd] overflow-hidden">
@@ -289,6 +372,7 @@ export const PaymentView: React.FC = () => {
             </table>
             <div className="bg-slate-50 border-t border-slate-300 px-3 py-2 flex items-center justify-end gap-6 font-bold">
               <span>Allocated: {money(allocated)}</span>
+              <span>Kapat: {money(deducted + discount)}</span>
               <span className={onAccount < 0 ? 'text-red-700' : ''}>
                 On account: {money(onAccount)}
               </span>

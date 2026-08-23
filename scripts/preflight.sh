@@ -118,6 +118,33 @@ else
   bad "LOG_REQUESTS must be true for a pilot"
 fi
 
+WA_VERSION="$(value WHATSAPP_GRAPH_VERSION)"
+WA_PHONE="$(value WHATSAPP_PHONE_NUMBER_ID)"
+WA_TOKEN="$(value WHATSAPP_ACCESS_TOKEN)"
+if [ -z "${WA_VERSION}${WA_PHONE}${WA_TOKEN}" ]; then
+  ok "WhatsApp delivery is explicitly disabled"
+elif [[ "${WA_VERSION}" =~ ^v[0-9]+\.[0-9]+$ ]] \
+  && [[ "${WA_PHONE}" =~ ^[0-9]{6,30}$ ]] && [ "${#WA_TOKEN}" -ge 20 ] \
+  && [ -n "$(value WHATSAPP_INVOICE_TEMPLATE)" ] \
+  && [ -n "$(value WHATSAPP_PAYMENT_REMINDER_TEMPLATE)" ]; then
+  ok "WhatsApp provider settings are complete (live delivery still needs provider acceptance)"
+else
+  bad "WhatsApp settings must be all blank or a complete Graph version, phone ID, token, and both templates"
+fi
+
+PRINT_BRIDGE="$(value VITE_PRINT_BRIDGE_URL)"
+SCALE_BRIDGE="$(value VITE_SCALE_BRIDGE_URL)"
+BRIDGE_TOKEN="$(value HARDWARE_BRIDGE_TOKEN)"
+if [ -z "${PRINT_BRIDGE}${SCALE_BRIDGE}${BRIDGE_TOKEN}" ]; then
+  ok "local hardware bridge is explicitly disabled"
+elif [[ "${PRINT_BRIDGE}" =~ ^http://(127\.0\.0\.1|localhost):[0-9]+/print$ ]] \
+  && [[ "${SCALE_BRIDGE}" =~ ^http://(127\.0\.0\.1|localhost):[0-9]+/scale$ ]] \
+  && [ "${#BRIDGE_TOKEN}" -ge 24 ] && [[ "${BRIDGE_TOKEN}" != *replace-with* ]]; then
+  ok "hardware bridge is loopback-only and has a non-template pairing token"
+else
+  bad "hardware bridge URLs must be loopback /print and /scale endpoints with a 24-plus-character pairing token"
+fi
+
 BACKUP_DIR="$(value BACKUP_DIR)"
 if [[ "${BACKUP_DIR}" = /* ]] && [ "${BACKUP_DIR}" != "${HERE}" ] && [[ "${BACKUP_DIR}" != "${HERE}/"* ]] \
    && [ -d "${BACKUP_DIR}" ] && [ -w "${BACKUP_DIR}" ]; then

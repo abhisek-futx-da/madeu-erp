@@ -41,7 +41,7 @@ async function download(path: string, fallbackName: string): Promise<void> {
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement('a');
   a.href = url;
-  a.download = named?.[1] ?? `${fallbackName}.csv`;
+  a.download = named?.[1] ?? (fallbackName.includes('.') ? fallbackName : `${fallbackName}.csv`);
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -73,6 +73,7 @@ export interface LedgerRow {
   id: string; code: string; name: string; alias: string;
   control_account_id: string; gstin: string | null; pan: string | null;
   gst_reg_type: string; credit_days: number; is_active: boolean;
+  mobile_e164?: string | null;
 }
 
 export interface QualityRow {
@@ -92,6 +93,8 @@ export interface DesignRow { id: string; quality_id: string; code: string; name:
 export interface PieceRow {
   id: string; barcode: string; status: string; lot_no: string; grade_code: string;
   uom: string; rack_code: string | null; grey_qty: number; finish_qty: number | null; current_qty: number;
+  grey_weight_kg: number | null; finish_weight_kg: number | null; current_weight_kg: number | null;
+  width_cms: number | null; glm: number | null; gsm: number | null;
   /** Grey plus jobwork plus everything else the piece has absorbed. */
   cost: number;
   quality: string; design: string | null; held_by: string | null;
@@ -101,6 +104,7 @@ export interface MovementRow {
   barcode: string; lot_no: string; quality: string; design: string | null;
   event: string; from_status: string | null; to_status: string;
   qty_before: number; qty_after: number; counterparty: string | null;
+  weight_before_kg: number | null; weight_after_kg: number | null;
   doc_type: string; occurred_at: string;
 }
 

@@ -6,6 +6,7 @@ import { clearApiCache } from '../lib/useApi';
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   globalThis.localStorage?.clear();
   clearApiCache();
 });

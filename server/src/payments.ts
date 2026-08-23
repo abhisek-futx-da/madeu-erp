@@ -18,6 +18,18 @@ export interface AllocationInput {
   amount: number;
 }
 
+export type DeductionKind =
+  'cash_discount' | 'quality_discount' | 'rate_difference' | 'shortage' | 'tds' | 'other';
+
+export interface DeductionInput {
+  salesInvoiceId?: string | null;
+  purchaseInvoiceId?: string | null;
+  kind: DeductionKind;
+  amount: number;
+  reason: string;
+  taxTreatment?: 'none' | 'credit_note_required' | 'debit_note_required';
+}
+
 export interface PaymentInput {
   kind: 'receipt' | 'payment';
   partyId: string;
@@ -30,6 +42,7 @@ export interface PaymentInput {
   bankLedgerId?: string | null;
   narration?: string;
   allocations?: AllocationInput[];
+  deductions?: DeductionInput[];
 }
 
 
@@ -41,7 +54,10 @@ export async function roleLedgers(db: Db) {
 }
 
 export async function recordPayment(ctx: Ctx, input: PaymentInput) {
-  const discount = round2(input.discount ?? 0);
+  const legacyDiscount = round2(input.discount ?? 0);
+  const deductions = input.deductions ?? [];
+  const typedDeductions = round2(sumBy(deductions, deduction => deduction.amount));
+  const discount = round2(legacyDiscount + typedDeductions);
   const allocations = input.allocations ?? [];
   const allocated = sumBy(allocations, a => a.amount);
 
@@ -58,6 +74,22 @@ export async function recordPayment(ctx: Ctx, input: PaymentInput) {
     if (wrongWay) {
       throw new Error(`a ${input.kind} cannot be allocated against that invoice type`);
     }
+  }
+  const allocatedInvoiceIds = new Set(allocations.map(a =>
+    input.kind === 'receipt' ? a.salesInvoiceId : a.purchaseInvoiceId
+  ).filter(Boolean));
+  for (const deduction of deductions) {
+    const target = input.kind === 'receipt'
+      ? deduction.salesInvoiceId : deduction.purchaseInvoiceId;
+    const wrongWay = input.kind === 'receipt'
+      ? deduction.purchaseInvoiceId : deduction.salesInvoiceId;
+    if (!target || wrongWay) {
+      throw new Error(`a ${input.kind} deduction must name one matching invoice`);
+    }
+    if (!allocatedInvoiceIds.has(target)) {
+      throw new Error('every named deduction must belong to a bill being settled now');
+    }
+    if (!deduction.reason.trim()) throw new Error('every deduction needs a reason');
   }
 
   const roles = await roleLedgers(ctx.db);
@@ -104,25 +136,62 @@ export async function recordPayment(ctx: Ctx, input: PaymentInput) {
     );
   }
 
+  if (deductions.length > 0) {
+    await ctx.db.query(
+      `insert into payment_deduction (tenant_id, payment_id, sales_invoice_id,
+                                      purchase_invoice_id, kind, amount, reason, tax_treatment)
+       select $1, $2, x.si, x.pi, x.kind::kapat_kind, x.amount, x.reason,
+              x.tax_treatment::kapat_tax_treatment
+         from unnest($3::uuid[], $4::uuid[], $5::text[], $6::numeric[], $7::text[], $8::text[])
+              as x(si,pi,kind,amount,reason,tax_treatment)`,
+      [ctx.tenantId, pay.id,
+       deductions.map(d => d.salesInvoiceId ?? null),
+       deductions.map(d => d.purchaseInvoiceId ?? null),
+       deductions.map(d => d.kind), deductions.map(d => round2(d.amount)),
+       deductions.map(d => d.reason.trim()),
+       deductions.map(d => d.taxTreatment ?? 'none')]
+    );
+  }
+
   // Receipt: Dr bank, Dr discount allowed, Cr customer.
   // Payment: Dr supplier, Cr bank, Cr discount received.
   const postings: { ledgerId: string; debit?: number; credit?: number }[] = [];
   const discountRole = input.kind === 'receipt' ? 'discount_allowed' : 'discount_received';
   const discountLedger = roles.get(discountRole);
 
+  const deductionRole = (deduction: DeductionInput) => {
+    if (deduction.kind === 'quality_discount') return 'quality_deduction';
+    if (deduction.kind === 'rate_difference') return 'rate_difference';
+    if (deduction.kind === 'shortage') return 'shortage_claim';
+    if (deduction.kind === 'tds') {
+      return input.kind === 'receipt' ? 'tds_receivable' : 'tds_payable';
+    }
+    return discountRole;
+  };
+
   if (input.kind === 'receipt') {
     if (bankOrCash) postings.push({ ledgerId: bankOrCash, debit: round2(input.amount) });
-    if (discount > 0) {
+    if (legacyDiscount > 0) {
       if (!discountLedger) throw new Error('no ledger bound to discount_allowed');
-      postings.push({ ledgerId: discountLedger, debit: discount });
+      postings.push({ ledgerId: discountLedger, debit: legacyDiscount });
+    }
+    for (const deduction of deductions) {
+      const ledger = roles.get(deductionRole(deduction));
+      if (!ledger) throw new Error(`no ledger bound for ${deduction.kind}`);
+      postings.push({ ledgerId: ledger, debit: round2(deduction.amount) });
     }
     postings.push({ ledgerId: input.partyId, credit: round2(input.amount + discount) });
   } else {
     postings.push({ ledgerId: input.partyId, debit: round2(input.amount + discount) });
     if (bankOrCash) postings.push({ ledgerId: bankOrCash, credit: round2(input.amount) });
-    if (discount > 0) {
+    if (legacyDiscount > 0) {
       if (!discountLedger) throw new Error('no ledger bound to discount_received');
-      postings.push({ ledgerId: discountLedger, credit: discount });
+      postings.push({ ledgerId: discountLedger, credit: legacyDiscount });
+    }
+    for (const deduction of deductions) {
+      const ledger = roles.get(deductionRole(deduction));
+      if (!ledger) throw new Error(`no ledger bound for ${deduction.kind}`);
+      postings.push({ ledgerId: ledger, credit: round2(deduction.amount) });
     }
   }
 
@@ -141,13 +210,17 @@ export async function recordPayment(ctx: Ctx, input: PaymentInput) {
       ctx, voucherType, input.paymentDate, narration, 'payment', pay.id, postings
     );
     await ctx.db.query('update payment set voucher_id = $1 where id = $2', [voucherId, pay.id]);
+    if (input.kind === 'receipt') {
+      await releaseBrokerageForPayment(ctx, pay.id, input.paymentDate);
+    }
   }
 
   return {
     id: pay.id, voucherNo, kind: input.kind,
     status: approval ? 'pending_approval' : 'approved',
     awaitingApproval: approval ? { role: approval.role, threshold: approval.threshold } : null,
-    amount: round2(input.amount), discount, allocated,
+    amount: round2(input.amount), discount, deductions: typedDeductions, allocated,
+    taxDocumentsRequired: deductions.filter(d => (d.taxTreatment ?? 'none') !== 'none').length,
     onAccount: round2(input.amount + discount - allocated)
   };
 }
@@ -186,6 +259,8 @@ export async function cancelPayment(ctx: Ctx, paymentId: string, reason: string)
   if (!pay) throw new Error('payment not found');
   if (pay.status === 'cancelled') throw new Error(`${pay.voucher_no} is already cancelled`);
 
+  await revokeBrokerageForPayment(ctx, paymentId, reason);
+
   // Reverse rather than delete: the original entry stays visible in the audit.
   if (pay.voucher_id) {
     const lines = await many<{ ledger_id: string; debit: number; credit: number }>(
@@ -210,6 +285,105 @@ export async function cancelPayment(ctx: Ctx, paymentId: string, reason: string)
     [paymentId, reason]
   );
   return { voucherNo: pay.voucher_no, cancelled: true };
+}
+
+/** Release brokerage only when an approved receipt has cleared the invoice. */
+export async function releaseBrokerageForPayment(
+  ctx: Ctx, paymentId: string, releaseDate = new Date().toISOString().slice(0, 10)
+) {
+  const invoices = await many<{
+    id: string; invoice_no: string; brokerage_amount: number; broker_id: string;
+  }>(ctx.db,
+    `select i.id, i.invoice_no, i.brokerage_amount, i.broker_id
+       from payment_allocation a
+       join payment p on p.id=a.payment_id and p.status='approved' and p.kind='receipt'
+       join sales_invoice i on i.id=a.sales_invoice_id and i.brokerage_state='accrued'
+       join v_outstanding_sales o on o.invoice_id=i.id and o.outstanding <= 0.005
+      where a.payment_id=$1 and i.brokerage_amount > 0
+      order by i.id for update of i`, [paymentId]);
+  const roles = await roleLedgers(ctx.db);
+  const accrued = roles.get('brokerage_accrued');
+  if (invoices.length > 0 && !accrued) throw new Error('no ledger bound to brokerage_accrued');
+  for (const invoice of invoices) {
+    const voucherId = await postVoucher(
+      ctx, 'journal', releaseDate,
+      `Brokerage payable after settlement of ${invoice.invoice_no}`,
+      'brokerage_release', invoice.id,
+      [
+        { ledgerId: accrued!, debit: round2(invoice.brokerage_amount) },
+        { ledgerId: invoice.broker_id, credit: round2(invoice.brokerage_amount) }
+      ]
+    );
+    await ctx.db.query(
+      `update sales_invoice set brokerage_state='released', brokerage_released_on=$2,
+              brokerage_release_voucher_id=$3, brokerage_release_payment_id=$4
+        where id=$1`, [invoice.id, releaseDate, voucherId, paymentId]);
+  }
+  return { released: invoices.length };
+}
+
+/** An owner may forfeit an unpaid bill's accrued commission under the mill's
+ * written broker terms. This reverses the expense/accrual; it never deletes or
+ * mutates the original invoice voucher. */
+export async function forfeitBrokerage(
+  ctx: Ctx, invoiceId: string, reason: string,
+  forfeitDate = new Date().toISOString().slice(0, 10)
+) {
+  const invoice = await one<{
+    id: string; invoice_no: string; brokerage_amount: number;
+  }>(ctx.db,
+    `select id,invoice_no,brokerage_amount
+       from sales_invoice
+      where id=$1 and brokerage_state='accrued' and brokerage_amount>0
+        and status in ('approved','partly_done','closed')
+      for update`, [invoiceId]);
+  if (!invoice) throw new Error('an approved invoice with accrued brokerage was not found');
+  const roles = await roleLedgers(ctx.db);
+  const accrued = roles.get('brokerage_accrued');
+  const expense = roles.get('brokerage_expense');
+  if (!accrued || !expense) throw new Error('brokerage accrual and expense ledgers must both be configured');
+  const voucherId = await postVoucher(
+    ctx, 'journal', forfeitDate,
+    `Brokerage forfeited on ${invoice.invoice_no}: ${reason.trim()}`,
+    'brokerage_forfeit', invoice.id,
+    [
+      { ledgerId: accrued, debit: round2(invoice.brokerage_amount) },
+      { ledgerId: expense, credit: round2(invoice.brokerage_amount) }
+    ]
+  );
+  await ctx.db.query(
+    `update sales_invoice set brokerage_state='forfeited',brokerage_forfeit_voucher_id=$2
+      where id=$1`, [invoice.id, voucherId]);
+  return { invoiceNo: invoice.invoice_no, state: 'forfeited', voucherId };
+}
+
+async function revokeBrokerageForPayment(ctx: Ctx, paymentId: string, reason: string) {
+  const invoices = await many<{
+    id: string; invoice_no: string; brokerage_release_voucher_id: string;
+  }>(ctx.db,
+    `select id, invoice_no, brokerage_release_voucher_id
+       from sales_invoice
+      where brokerage_release_payment_id=$1 and brokerage_state='released'
+      order by id for update`, [paymentId]);
+  for (const invoice of invoices) {
+    const lines = await many<{ ledger_id: string; debit: number; credit: number }>(ctx.db,
+      'select ledger_id, debit, credit from voucher_line where voucher_id=$1',
+      [invoice.brokerage_release_voucher_id]);
+    await postVoucher(
+      ctx, 'journal', new Date().toISOString().slice(0, 10),
+      `Reverse brokerage release for ${invoice.invoice_no}: ${reason}`,
+      'brokerage_release_reversal', invoice.id,
+      lines.map(line => ({
+        ledgerId: line.ledger_id,
+        debit: Number(line.credit) || undefined,
+        credit: Number(line.debit) || undefined
+      }))
+    );
+    await ctx.db.query(
+      `update sales_invoice set brokerage_state='accrued', brokerage_released_on=null,
+              brokerage_release_voucher_id=null, brokerage_release_payment_id=null
+        where id=$1`, [invoice.id]);
+  }
 }
 
 export async function postVoucher(

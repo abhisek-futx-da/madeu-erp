@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { enqueue, isOnline } from '../lib/offlineQueue';
 import type { LedgerRow, PieceRow } from '../lib/api';
 import { ArrowDownToLine, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react';
+import { captureScaleKg } from '../lib/hardware';
 
 interface Line {
   barcode: string;
@@ -13,6 +14,8 @@ interface Line {
   receivedQty: number;
   finishGrade: string;
   jobRate: number;
+  issuedWeightKg: number | null;
+  receivedWeightKg: number | null;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -49,8 +52,10 @@ export const DyeingReceiptView: React.FC = () => {
       issued: a.issued + l.issuedQty,
       received: a.received + l.receivedQty,
       jobwork: a.jobwork + l.receivedQty * l.jobRate
+      , issuedWeight: a.issuedWeight + Number(l.issuedWeightKg ?? 0)
+      , receivedWeight: a.receivedWeight + Number(l.receivedWeightKg ?? 0)
     }),
-    { issued: 0, received: 0, jobwork: 0 }
+    { issued: 0, received: 0, jobwork: 0, issuedWeight: 0, receivedWeight: 0 }
   );
   const shrinkagePct = totals.issued > 0
     ? ((totals.issued - totals.received) * 100) / totals.issued
@@ -78,12 +83,24 @@ export const DyeingReceiptView: React.FC = () => {
       issuedQty: piece.current_qty,
       receivedQty: piece.current_qty,
       finishGrade: 'A',
-      jobRate: defaultRate
+      jobRate: defaultRate,
+      issuedWeightKg: piece.current_weight_kg == null ? null : Number(piece.current_weight_kg),
+      receivedWeightKg: piece.current_weight_kg == null ? null : Number(piece.current_weight_kg)
     }]);
   };
 
   const update = (idx: number, patch: Partial<Line>) =>
     setLines(prev => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+
+  const readWeight = async (idx: number) => {
+    try {
+      const weight = await captureScaleKg();
+      update(idx, { receivedWeightKg: weight });
+      setNotice(`Scale captured ${weight.toFixed(3)} kg for ${lines[idx]?.barcode ?? 'piece'}`);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const save = async () => {
     if (!processHouseId || lines.length === 0) {
@@ -94,7 +111,8 @@ export const DyeingReceiptView: React.FC = () => {
       processHouseId, entryDate, challanNo, challanDate,
       lines: lines.map(l => ({
         barcode: l.barcode, receivedQty: l.receivedQty,
-        finishGrade: l.finishGrade, jobRate: l.jobRate
+        finishGrade: l.finishGrade, jobRate: l.jobRate,
+        receivedWeightKg: l.receivedWeightKg
       }))
     };
 
@@ -209,6 +227,8 @@ export const DyeingReceiptView: React.FC = () => {
                 <th className="px-2 py-1.5 font-bold">Quality</th>
                 <th className="px-2 py-1.5 font-bold text-right">Issued</th>
                 <th className="px-2 py-1.5 font-bold text-right">Received</th>
+                <th className="px-2 py-1.5 font-bold text-right">Issued kg</th>
+                <th className="px-2 py-1.5 font-bold text-right">Received kg</th>
                 <th className="px-2 py-1.5 font-bold text-right">Shrink %</th>
                 <th className="px-2 py-1.5 font-bold">Grade</th>
                 <th className="px-2 py-1.5 font-bold text-right">Rate</th>
@@ -218,7 +238,7 @@ export const DyeingReceiptView: React.FC = () => {
             </thead>
             <tbody>
               {lines.length === 0 && (
-                <tr><td colSpan={10} className="px-2 py-6 text-center text-slate-400">
+                <tr><td colSpan={12} className="px-2 py-6 text-center text-slate-400">
                   Scan a barcode to begin
                 </td></tr>
               )}
@@ -238,6 +258,18 @@ export const DyeingReceiptView: React.FC = () => {
                         onChange={e => update(i, { receivedQty: Number(e.target.value) })}
                         className="erp-input w-24 text-right font-mono"
                       />
+                    </td>
+                    <td className="px-2 py-1 text-right font-mono">
+                      {l.issuedWeightKg == null ? '—' : l.issuedWeightKg.toFixed(3)}
+                    </td>
+                    <td className="px-2 py-1 text-right">
+                      <div className="flex items-center gap-1 justify-end">
+                        <input aria-label={`Received kilograms for ${l.barcode}`} type="number" step="0.001"
+                               value={l.receivedWeightKg ?? ''}
+                               onChange={e => update(i, { receivedWeightKg: e.target.value === '' ? null : Number(e.target.value) })}
+                               className="erp-input w-20 text-right font-mono" />
+                        <button type="button" onClick={() => void readWeight(i)} className="erp-btn px-1" title="Read scale">⚖</button>
+                      </div>
                     </td>
                     <td className={`px-2 py-1 text-right font-mono font-bold ${
                       hot ? 'text-red-700' : 'text-slate-700'
@@ -278,6 +310,9 @@ export const DyeingReceiptView: React.FC = () => {
             <span>Pieces: {lines.length}</span>
             <span>Issued: {totals.issued.toFixed(2)}</span>
             <span>Received: {totals.received.toFixed(2)}</span>
+            {(totals.issuedWeight > 0 || totals.receivedWeight > 0) && (
+              <span>Weight: {totals.issuedWeight.toFixed(3)} → {totals.receivedWeight.toFixed(3)} KG</span>
+            )}
             <span className={shrinkagePct > 8 ? 'text-red-700' : 'text-emerald-800'}>
               Shrinkage: {shrinkagePct.toFixed(2)}%
             </span>

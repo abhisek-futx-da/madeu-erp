@@ -26,6 +26,7 @@ export interface ReprocessReceiptInput {
     receivedQty: number;
     additionalRate: number;
     finishGrade: string;
+    receivedWeightKg?: number | null;
   }[];
 }
 
@@ -35,8 +36,9 @@ export async function postReprocessIssue(ctx: Ctx, input: ReprocessIssueInput) {
   }
   const pieces = await many<{
     id: string; barcode: string; status: string; current_qty: number; grade_code: string;
+    current_weight_kg: number | null;
   }>(ctx.db,
-    `select id, barcode, status::text, current_qty, grade_code
+    `select id, barcode, status::text, current_qty, grade_code, current_weight_kg
        from piece where barcode = any($1::text[]) order by id for update`,
     [input.barcodes]);
   const byBarcode = new Map(pieces.map(piece => [piece.barcode, piece]));
@@ -62,22 +64,25 @@ export async function postReprocessIssue(ctx: Ctx, input: ReprocessIssueInput) {
   const ordered = input.barcodes.map(barcode => byBarcode.get(barcode)!);
   await ctx.db.query(
     `insert into dyeing_reprocess_line
-       (tenant_id, reprocess_id, piece_id, sno, issued_qty, original_grade)
-     select $1,$2,x.piece_id,x.sno,x.qty,x.grade
-       from unnest($3::uuid[], $4::smallint[], $5::numeric[], $6::text[])
-            as x(piece_id,sno,qty,grade)`,
+       (tenant_id, reprocess_id, piece_id, sno, issued_qty, issued_weight_kg, original_grade)
+     select $1,$2,x.piece_id,x.sno,x.qty,x.weight_kg,x.grade
+       from unnest($3::uuid[], $4::smallint[], $5::numeric[], $6::numeric[], $7::text[])
+            as x(piece_id,sno,qty,weight_kg,grade)`,
     [ctx.tenantId, doc.id, ordered.map(p => p.id), ordered.map((_, i) => i + 1),
-     ordered.map(p => Number(p.current_qty)), ordered.map(p => p.grade_code)]);
+     ordered.map(p => Number(p.current_qty)), ordered.map(p => p.current_weight_kg),
+     ordered.map(p => p.grade_code)]);
 
   await ctx.db.query(
     `insert into piece_movement
        (tenant_id,piece_id,event,from_status,to_status,qty_before,qty_after,
+        weight_before_kg,weight_after_kg,
         counterparty_id,doc_type,doc_id,created_by,note)
      select $1,x.piece_id,'send_reprocess','received_finish','reprocess_at_process_house',
-            x.qty,x.qty,$2,'dyeing_reprocess',$3,$4,$5
-       from unnest($6::uuid[], $7::numeric[]) as x(piece_id,qty)`,
+            x.qty,x.qty,x.weight_kg,x.weight_kg,$2,'dyeing_reprocess',$3,$4,$5
+       from unnest($6::uuid[], $7::numeric[], $8::numeric[]) as x(piece_id,qty,weight_kg)`,
     [ctx.tenantId, input.processHouseId, doc.id, ctx.userId, input.reason,
-     ordered.map(p => p.id), ordered.map(p => Number(p.current_qty))]);
+     ordered.map(p => p.id), ordered.map(p => Number(p.current_qty)),
+     ordered.map(p => p.current_weight_kg)]);
 
   return {
     id: doc.id, issueNo, status: 'approved', pieces: ordered.length,
@@ -100,9 +105,11 @@ export async function postReprocessReceipt(ctx: Ctx, input: ReprocessReceiptInpu
   const barcodes = input.lines.map(line => line.barcode);
   const sources = await many<{
     reprocess_line_id: string; piece_id: string; barcode: string; issued_qty: number;
+    issued_weight_kg: number | null;
     status: string; held_by_ledger_id: string | null; quality_id: string;
   }>(ctx.db,
     `select rl.id as reprocess_line_id, p.id as piece_id, p.barcode, rl.issued_qty,
+            rl.issued_weight_kg,
             p.status::text, p.held_by_ledger_id, p.quality_id
        from dyeing_reprocess_line rl
        join piece p on p.id = rl.piece_id
@@ -153,15 +160,16 @@ export async function postReprocessReceipt(ctx: Ctx, input: ReprocessReceiptInpu
   await ctx.db.query(
     `insert into dyeing_reprocess_receipt_line
        (tenant_id,receipt_id,reprocess_line_id,piece_id,sno,issued_qty,received_qty,
-        additional_rate,finish_grade)
-     select $1,$2,x.source_id,x.piece_id,x.sno,x.issued,x.received,x.rate,x.grade
+        received_weight_kg,additional_rate,finish_grade)
+     select $1,$2,x.source_id,x.piece_id,x.sno,x.issued,x.received,x.weight_kg,x.rate,x.grade
        from unnest($3::uuid[], $4::uuid[], $5::smallint[], $6::numeric[],
-                   $7::numeric[], $8::numeric[], $9::text[])
-            as x(source_id,piece_id,sno,issued,received,rate,grade)`,
+                   $7::numeric[], $8::numeric[], $9::numeric[], $10::text[])
+            as x(source_id,piece_id,sno,issued,received,weight_kg,rate,grade)`,
     [ctx.tenantId, receipt.id, resolved.map(r => r.source.reprocess_line_id),
      resolved.map(r => r.source.piece_id), resolved.map(r => r.index + 1),
      resolved.map(r => Number(r.source.issued_qty)), resolved.map(r => r.receivedQty),
-     resolved.map(r => r.additionalRate), resolved.map(r => r.finishGrade)]);
+     resolved.map(r => r.receivedWeightKg ?? null), resolved.map(r => r.additionalRate),
+     resolved.map(r => r.finishGrade)]);
 
   const ledgers = await roleLedgers(ctx.db);
   const postings = amount > 0 ? [
@@ -198,10 +206,13 @@ export async function applyReprocessReceipt(ctx: Ctx, receiptId: string) {
   const lines = await many<{
     piece_id: string; issued_qty: number; received_qty: number;
     additional_amount: number; finish_grade: string; status: string; held_by_ledger_id: string | null;
+    issued_weight_kg: number | null; received_weight_kg: number | null;
   }>(ctx.db,
     `select rrl.piece_id, rrl.issued_qty, rrl.received_qty, rrl.additional_amount,
+            rl.issued_weight_kg,rrl.received_weight_kg,
             rrl.finish_grade, p.status::text, p.held_by_ledger_id
        from dyeing_reprocess_receipt_line rrl
+       join dyeing_reprocess_line rl on rl.id=rrl.reprocess_line_id
        join piece p on p.id = rrl.piece_id
       where rrl.receipt_id = $1 order by rrl.sno for update of p`, [receiptId]);
   for (const line of lines) {
@@ -212,23 +223,28 @@ export async function applyReprocessReceipt(ctx: Ctx, receiptId: string) {
 
   await ctx.db.query(
     `update piece p
-        set finish_qty = x.qty, grade_code = x.grade,
+        set finish_qty = x.qty, finish_weight_kg=coalesce(x.weight_kg,p.current_weight_kg),
+            grade_code = x.grade,
             jobwork_cost = p.jobwork_cost + x.cost
-       from unnest($1::uuid[], $2::numeric[], $3::text[], $4::numeric[])
-            as x(piece_id,qty,grade,cost)
+       from unnest($1::uuid[], $2::numeric[], $3::numeric[], $4::text[], $5::numeric[])
+            as x(piece_id,qty,weight_kg,grade,cost)
       where p.id = x.piece_id`,
     [lines.map(line => line.piece_id), lines.map(line => Number(line.received_qty)),
-     lines.map(line => line.finish_grade), lines.map(line => Number(line.additional_amount))]);
+     lines.map(line => line.received_weight_kg), lines.map(line => line.finish_grade),
+     lines.map(line => Number(line.additional_amount))]);
   await ctx.db.query(
     `insert into piece_movement
        (tenant_id,piece_id,event,from_status,to_status,qty_before,qty_after,
+        weight_before_kg,weight_after_kg,
         doc_type,doc_id,created_by)
      select $1,x.piece_id,'receive_reprocess','reprocess_at_process_house','received_finish',
-            x.before_qty,x.after_qty,'dyeing_reprocess_receipt',$2,$3
-       from unnest($4::uuid[], $5::numeric[], $6::numeric[])
-            as x(piece_id,before_qty,after_qty)`,
+            x.before_qty,x.after_qty,x.before_weight,coalesce(x.after_weight,x.before_weight),
+            'dyeing_reprocess_receipt',$2,$3
+       from unnest($4::uuid[], $5::numeric[], $6::numeric[], $7::numeric[], $8::numeric[])
+            as x(piece_id,before_qty,after_qty,before_weight,after_weight)`,
     [ctx.tenantId, receiptId, ctx.userId, lines.map(line => line.piece_id),
-     lines.map(line => Number(line.issued_qty)), lines.map(line => Number(line.received_qty))]);
+     lines.map(line => Number(line.issued_qty)), lines.map(line => Number(line.received_qty)),
+     lines.map(line => line.issued_weight_kg), lines.map(line => line.received_weight_kg)]);
 
   const outstanding = await one<{ n: number }>(ctx.db,
     `select count(*)::int as n from dyeing_reprocess_line rl

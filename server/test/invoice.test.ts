@@ -168,10 +168,11 @@ test('the owner-selected invoice rounding policy changes real invoice totals', a
   assert.equal(restored.status, 200);
 });
 
-test('a configured sales broker accrues in the invoice voucher and cancellation reverses it', async () => {
+test('a configured sales broker accrues, can be forfeited, and cancellation remains exact', async () => {
   const before = await api('/api/reports/party-balance');
   const beforeExpense = Number(before.body.find((row: any) => row.code === '982')?.balance ?? 0);
   const beforeBroker = Number(before.body.find((row: any) => row.code === '801')?.balance ?? 0);
+  const beforeAccrued = Number(before.body.find((row: any) => row.code === '987')?.balance ?? 0);
   const { barcodes, rate } = await pieceReadyToShip('BR', 1, 100, 50);
   const order = await api('/api/sales-orders', {
     method: 'POST',
@@ -205,8 +206,19 @@ test('a configured sales broker accrues in the invoice voucher and cancellation 
   const posted = await api('/api/reports/party-balance');
   assert.equal(Number(posted.body.find((row: any) => row.code === '982')?.balance), beforeExpense + 25,
     'brokerage expense must be debited');
-  assert.equal(Number(posted.body.find((row: any) => row.code === '801')?.balance), beforeBroker - 25,
-    'the broker must be credited');
+  assert.equal(Number(posted.body.find((row: any) => row.code === '801')?.balance ?? 0), beforeBroker,
+    'the broker is not payable until the customer settles the invoice');
+  assert.equal(Number(posted.body.find((row: any) => row.code === '987')?.balance), beforeAccrued - 25,
+    'brokerage must accrue in a separate not-yet-payable ledger');
+
+  const forfeited = await api(`/api/sales-invoices/${invoice.body.id}/brokerage/forfeit`, {
+    method: 'POST', body: { reason: 'buyer defaulted under broker terms', forfeitDate: '2026-09-20' }
+  });
+  assert.equal(forfeited.status, 200, JSON.stringify(forfeited.body));
+  assert.equal(forfeited.body.state, 'forfeited');
+  const afterForfeit = await api('/api/reports/party-balance');
+  assert.equal(Number(afterForfeit.body.find((row: any) => row.code === '982')?.balance), beforeExpense);
+  assert.equal(Number(afterForfeit.body.find((row: any) => row.code === '987')?.balance ?? 0), beforeAccrued);
 
   const cancelled = await api(`/api/documents/sales_invoice/${invoice.body.id}/cancel`, {
     method: 'POST', body: { reason: 'brokerage reversal proof' }
@@ -215,7 +227,52 @@ test('a configured sales broker accrues in the invoice voucher and cancellation 
 
   const reversed = await api('/api/reports/party-balance');
   assert.equal(Number(reversed.body.find((row: any) => row.code === '982')?.balance), beforeExpense);
-  assert.equal(Number(reversed.body.find((row: any) => row.code === '801')?.balance), beforeBroker);
+  assert.equal(Number(reversed.body.find((row: any) => row.code === '801')?.balance ?? 0), beforeBroker);
+  assert.equal(Number(reversed.body.find((row: any) => row.code === '987')?.balance ?? 0), beforeAccrued);
+});
+
+test('brokerage becomes payable only after the customer actually settles the invoice', async () => {
+  const before = await api('/api/reports/party-balance');
+  const beforeBroker = Number(before.body.find((row: any) => row.code === '801')?.balance ?? 0);
+  const beforeAccrued = Number(before.body.find((row: any) => row.code === '987')?.balance ?? 0);
+  const { barcodes, rate } = await pieceReadyToShip('BRPAY', 1, 100, 50);
+  const order = await api('/api/sales-orders', { method: 'POST', body: {
+    partyId: MADURAI, brokerId: BROKER, orderDate: '2026-09-11',
+    lines: [{ qualityId: GALAXY, gradeCode: 'A', pcs: 1, cutLength: 100, qty: 100, rate }]
+  }});
+  assert.equal(order.status, 201, JSON.stringify(order.body));
+  const orders = await api('/api/sales-orders?limit=500');
+  const lineId = orders.body.rows.find((row: any) => row.id === order.body.id)?.lines[0]?.id;
+  assert.ok(lineId);
+  const dispatch = await api('/api/dispatches', { method: 'POST', body: {
+    partyId: MADURAI, challanNo: `INVDC-${stamp}-BRPAY`, challanDate: '2026-09-12',
+    lines: [{ barcode: barcodes[0], rate, soLineId: lineId }]
+  }});
+  assert.equal(dispatch.status, 201, JSON.stringify(dispatch.body));
+  const invoice = await api('/api/sales-invoices', { method: 'POST', body: {
+    dispatchId: dispatch.body.id, invoiceDate: '2026-09-12'
+  }});
+  assert.equal(invoice.status, 201, JSON.stringify(invoice.body));
+  assert.equal(invoice.body.brokerage, 25);
+
+  const receipt = await api('/api/payments', { method: 'POST', body: {
+    kind: 'receipt', partyId: MADURAI, paymentDate: '2026-09-13', mode: 'cash',
+    amount: invoice.body.invoiceTotal,
+    allocations: [{ salesInvoiceId: invoice.body.id, amount: invoice.body.invoiceTotal }]
+  }});
+  assert.equal(receipt.status, 201, JSON.stringify(receipt.body));
+  const released = await api('/api/reports/party-balance');
+  assert.equal(Number(released.body.find((row: any) => row.code === '801')?.balance), beforeBroker - 25);
+  assert.equal(Number(released.body.find((row: any) => row.code === '987')?.balance ?? 0), beforeAccrued,
+    'the temporary accrual must clear when the broker becomes payable');
+
+  const cancelled = await api(`/api/payments/${receipt.body.id}/cancel`, {
+    method: 'POST', body: { reason: 'prove brokerage returns to accrued' }
+  });
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+  const restored = await api('/api/reports/party-balance');
+  assert.equal(Number(restored.body.find((row: any) => row.code === '801')?.balance ?? 0), beforeBroker);
+  assert.equal(Number(restored.body.find((row: any) => row.code === '987')?.balance), beforeAccrued - 25);
 });
 
 test('the e-invoice payload is stored and matches the NIC schema', async () => {
