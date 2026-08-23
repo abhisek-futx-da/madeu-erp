@@ -34,7 +34,7 @@ export const SalesOrderView: React.FC = () => {
   const controls = useApi<{ id: string; nature: string }[]>('/control-accounts');
   const qualities = useApi<QualityRow[]>('/qualities');
   const grades = useApi<GradeRow[]>('/grades');
-  const orders = usePagedList<OrderRow>('/sales-orders');
+  const orders = usePagedList<OrderRow>('/sales-orders', 50, 'sales_orders');
   const { submit, busy, error } = useSubmit<unknown, any>('/sales-orders');
 
   const debtorIds = new Set(

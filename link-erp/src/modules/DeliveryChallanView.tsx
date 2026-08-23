@@ -145,7 +145,7 @@ const ChallanPrint: React.FC<{ issueId: string; onClose: () => void }> = ({ issu
 };
 
 export const DeliveryChallanView: React.FC = () => {
-  const list = usePagedList<ChallanRow>('/delivery-challans');
+  const list = usePagedList<ChallanRow>('/delivery-challans', 50, 'delivery_challans');
   const [printing, setPrinting] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);

@@ -28,6 +28,8 @@ import {
 } from './bank-reconciliation.ts';
 import { applyReprocessReceipt } from './reprocess.ts';
 import { millReadinessRouter } from './mill-readiness.ts';
+import { onboardingRouter } from './onboarding.ts';
+import { globalSearchRouter } from './global-search.ts';
 
 const uuid = z.string().uuid();
 const money = z.coerce.number().finite();
@@ -57,6 +59,8 @@ export function buildRoutes() {
   api.use('/configuration', configurationRouter());
   api.use(identityRouter());
   api.use(millReadinessRouter());
+  api.use('/onboarding', onboardingRouter());
+  api.use('/global-search', globalSearchRouter());
 
   // ------------------------------------------------------------- documents --
 

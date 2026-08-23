@@ -1,6 +1,6 @@
-# Release Evidence — 23 August 2026
+# Release Evidence — 24 August 2026
 
-**Local release candidate:** `v0.3.0-mill-rc1`. The tag anchors the verified
+**Local release candidate:** `v0.4.0-onboarding-rc1`. The tag anchors the verified
 source on this machine; no access-controlled remote is configured yet.
 
 ## Status
@@ -11,19 +11,19 @@ not a CA opinion, a mill acceptance, or a government integration result.
 
 ## What was verified from a clean database build
 
-- 44 schema migrations applied and recorded; the migration ledger exactly
+- 45 schema migrations applied and recorded; the migration ledger exactly
   matches the migration files and every foreign key has a supporting index.
-- 18 database invariants passed.
-- 307 server tests passed with no skips, including tenant isolation, concurrent scans and
+- 20 database invariants passed.
+- 314 server tests passed with no skips, including tenant isolation, concurrent scans and
   numbering, double-entry balancing, GST calculation, returns, cancellation,
   physical stock count, reprocessing, purchase orders, sales-order allocation,
   packing lists, bank reconciliation, and maker-checker approvals.
-- 86 frontend tests passed with no skips; the frontend typecheck and production
+- 91 frontend tests passed with no skips; the frontend typecheck and production
   build passed.
 - The desktop/mobile browser gate passed every applicable case: accessible
   shell and forms, deep links, mobile navigation, and every owner module
   rendering without a browser crash or API 500.
-- The complete local release pipeline passed 17/17 gates, including production
+- The complete local release pipeline passed 16/16 gates, including production
   dependency audits at high severity, upgrade rehearsal, restore drill, browser
   checks, and both container image builds.
 - The API and web container images built successfully.
@@ -61,6 +61,15 @@ not a CA opinion, a mill acceptance, or a government integration result.
 - A first-day dashboard guides a new mill through masters, grey inward,
   job-work issue/receipt, and dispatch/invoicing. Empty reports now explain
   which real document is missing and link to its workflow.
+- The owner-only onboarding workbench imports ledgers, qualities, HSN/SAC
+  codes, grades, units, widths, and racks from Excel-compatible CSV. It stages
+  a preview, validates schema, duplicates and references, then applies the
+  accepted rows once in a single transaction. Rejection reports and immutable
+  batch history are retained. It does not claim to migrate opening stock or
+  opening accounting balances.
+- Tenant-wide operational search finds pieces/barcodes/lots, parties, purchase
+  and sales orders, dispatches, sales and purchase invoices, payments, GST
+  notes, and e-way bills, with ranked linked drilldown to the exact module.
 - The year-volume harness met every defined query budget with 150,000 pieces,
   465,000 movement records, 3,000 invoices, and 10,500 invoice lines. The RLS
   stock-status path measured 23.0 ms against its 300 ms budget after a targeted
@@ -116,8 +125,10 @@ not a CA opinion, a mill acceptance, or a government integration result.
 
 ## Do not claim these as complete
 
-1. **CA validation:** treatment, reports, master data, opening migration, and
-   the mill’s actual facts require written CA review.
+1. **CA validation:** treatment, reports, opening accounting/stock migration,
+   and the mill’s actual facts require written CA review. Seven operational
+   master types now have a controlled import, but that is not an opening-book
+   conversion.
 2. **Live GSP/IRP/E-way:** no sandbox or production credential/provider round
    trip is proven by this evidence.
 3. **Mill-floor proof:** actual barcode/scale hardware, network loss, label calibration, staff
@@ -127,7 +138,7 @@ not a CA opinion, a mill acceptance, or a government integration result.
    agreed with the CA before filing.
 5. **Purchase brokerage treatment:** decide in writing whether each purchase
    brokerage class is expensed or capitalised before adding automatic posting.
-6. **Release governance:** push the exact local `v0.3.0-mill-rc1` tag to an
+6. **Release governance:** push the exact local `v0.4.0-onboarding-rc1` tag to an
    access-controlled remote repository before the CA review, and preserve a
    second, independent backup; a laptop-only history is not sufficient business
    continuity. This document is not evidence that either external copy exists.

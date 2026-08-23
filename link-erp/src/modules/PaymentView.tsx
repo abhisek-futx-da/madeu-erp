@@ -55,7 +55,7 @@ export const PaymentView: React.FC = () => {
 
   const ledgers = useApi<LedgerRow[]>('/ledgers');
   const controls = useApi<{ id: string; nature: string }[]>('/control-accounts');
-  const payments = usePagedList<PaymentRow>('/payments');
+  const payments = usePagedList<PaymentRow>('/payments', 50, 'payments');
   const outstanding = useApi<Outstanding[]>(
     partyId ? `/reports/${kind === 'receipt' ? 'outstanding-sales' : 'outstanding-purchases'}` : null,
     [partyId, kind]

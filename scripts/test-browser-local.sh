@@ -19,10 +19,20 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Use the same database transport as the server suite.  Local development uses
+# a private Unix socket; hardcoding 127.0.0.1 made health checks intermittently
+# hang even though PostgreSQL was healthy on its configured socket.  Hosted CI
+# still uses its ordinary TCP host and the isolated password below.
+if [[ "${PGHOST:-}" == /* ]]; then
+  E2E_DATABASE_URL="postgresql://link_erp_app@/${DB}?host=${PGHOST}&port=${PGPORT:-5432}"
+else
+  E2E_DATABASE_URL="postgresql://link_erp_app:${APP_PASSWORD}@${PGHOST:-127.0.0.1}:${PGPORT:-5432}/${DB}"
+fi
+
 "${ROOT}/link-erp/db/rebuild.sh" "${DB}" >/dev/null
 psql -q -v ON_ERROR_STOP=1 -d "${DB}" -c "alter role link_erp_app password '${APP_PASSWORD}'"
 
-DATABASE_URL="postgresql://link_erp_app:${APP_PASSWORD}@127.0.0.1:${PGPORT:-5432}/${DB}" \
+DATABASE_URL="${E2E_DATABASE_URL}" \
 JWT_SECRET='e2e-only-secret-not-used-anywhere-real' \
 MFA_ENCRYPTION_KEY='MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=' \
 CORS_ORIGIN="http://127.0.0.1:${WEB_PORT}" PORT="${API_PORT}" LOG_REQUESTS=false \
@@ -35,13 +45,17 @@ VITE_API_BASE="http://127.0.0.1:${API_PORT}" \
 WEB_PID=$!
 
 ready=false
-for _ in $(seq 1 60); do
+# A cold laptop may be building containers or scanning dependencies while this
+# isolated stack starts.  Fifteen seconds made the release gate flaky even
+# though both services became healthy immediately afterwards.  Readiness is a
+# condition, not a race: allow up to one minute and still fail decisively.
+for _ in $(seq 1 120); do
   if curl -fsS -m 1 "http://127.0.0.1:${API_PORT}/health" >/dev/null 2>&1 \
      && curl -fsS -m 1 "http://127.0.0.1:${WEB_PORT}" >/dev/null 2>&1; then
     ready=true
     break
   fi
-  sleep 0.25
+  sleep 0.5
 done
 if [ "${ready}" != true ]; then
   echo "browser stack did not become ready" >&2

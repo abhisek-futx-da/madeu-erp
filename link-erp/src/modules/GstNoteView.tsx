@@ -32,7 +32,7 @@ export const GstNoteView: React.FC = () => {
   const [notice, setNotice] = useState<string | null>(null);
 
   const invoices = useApi<Page<InvoiceRow>>('/sales-invoices?limit=200');
-  const notes = usePagedList<NoteRow>('/gst-notes');
+  const notes = usePagedList<NoteRow>('/gst-notes', 50, 'gst_notes');
   const { submit, busy, error } = useSubmit<unknown, any>('/gst-notes');
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 

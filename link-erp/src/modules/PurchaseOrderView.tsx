@@ -137,7 +137,7 @@ export const PurchaseOrderView: React.FC = () => {
   const controls = useApi<{ id: string; nature: string }[]>('/control-accounts');
   const qualities = useApi<QualityRow[]>('/qualities');
   const grades = useApi<GradeRow[]>('/grades');
-  const orders = usePagedList<OrderRow>('/grey-purchase-orders');
+  const orders = usePagedList<OrderRow>('/grey-purchase-orders', 50, 'purchase_orders');
   const { submit, busy, error } = useSubmit<unknown, { id: string; orderNo: string }>('/grey-purchase-orders');
 
   const controlIds = (nature: string) => new Set((controls.data ?? []).filter(c => c.nature === nature).map(c => c.id));

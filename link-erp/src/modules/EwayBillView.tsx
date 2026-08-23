@@ -32,7 +32,7 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 export const EwayBillView: React.FC = () => {
-  const list = usePagedList<EwbRow>('/eway-bills');
+  const list = usePagedList<EwbRow>('/eway-bills', 50, 'eway_bills');
   const [payload, setPayload] = useState<{ ref: string; json: unknown } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 

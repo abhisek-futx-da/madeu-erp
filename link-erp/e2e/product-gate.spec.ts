@@ -6,15 +6,18 @@ async function signIn(page: Page) {
   await page.getByLabel('Email').fill('owner@neelkamal.test');
   await page.getByLabel('Password').fill('changeme');
   await page.getByRole('button', { name: /sign in/i }).click();
-  await expect(page.getByText('Neelkamal Textiles').first()).toBeVisible();
+  // bcrypt is deliberately expensive.  A constrained pilot laptop can take
+  // longer than Playwright's five-second assertion default while the full
+  // release gate is also building images; that is not a failed login.
+  await expect(page.getByText('Neelkamal Textiles').first()).toBeVisible({ timeout: 20_000 });
 }
 
 const OWNER_MODULES = [
-  'dashboard', 'approvals', 'password', 'company_setup', 'barcode_history', 'audit_trail',
-  'ledgers', 'qualities', 'grades', 'hsn-codes', 'units', 'widths', 'racks', 'bank-accounts', 'users',
+  'dashboard', 'global_search', 'approvals', 'password', 'company_setup', 'barcode_history', 'audit_trail',
+  'ledgers', 'qualities', 'grades', 'hsn-codes', 'units', 'widths', 'racks', 'bank-accounts', 'users', 'data_onboarding',
   'purchase_orders', 'sales_orders', 'grey_inward', 'dyeing_issue', 'dyeing_receipt', 'reprocess', 'grey_return', 'dyeing_return',
   'customer_return', 'write_off', 'cut_pack', 'regroup', 'stock_count', 'delivery_challans', 'labels',
-  'dispatch', 'packing_lists', 'payments', 'bank_reconciliation', 'sales_invoices', 'purchase_invoices', 'gst_notes', 'profit_loss',
+  'dispatch', 'packing_lists', 'payments', 'bank_reconciliation', 'mill_integrations', 'sales_invoices', 'purchase_invoices', 'gst_notes', 'profit_loss',
   'balance_sheet', 'trial_balance', 'party_statement', 'receivable_ageing', 'outstanding_sales',
   'outstanding_purchases', 'party_balance', 'tds_summary', 'year_close', 'gstr1_b2b', 'gstr1_cdnr',
   'gstr1_hsn', 'gstr3b', 'itc04', 'eway_bills', 'itc_summary', 'gst_liability', 'einvoice_pending',
