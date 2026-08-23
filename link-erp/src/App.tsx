@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CompanyBanner } from './components/CompanyBanner';
 import { StatusBar } from './components/StatusBar';
 import { LoginScreen } from './components/LoginScreen';
-import { ModuleNav } from './components/ModuleNav';
+import { ModuleNav, NAV } from './components/ModuleNav';
+import { WorkspaceTabs } from './components/WorkspaceTabs';
 
 import { LiveGreyInwardView } from './modules/LiveGreyInwardView';
 import { ScanDocumentView } from './modules/ScanDocumentView';
@@ -27,14 +28,73 @@ import { PieceRegroupView } from './modules/PieceRegroupView';
 import { StockCountView } from './modules/StockCountView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { OfflineBadge } from './components/OfflineBadge';
+import { PasswordView } from './modules/PasswordView';
+import { UserAdminView } from './modules/UserAdminView';
+import { CompanySetupView } from './modules/CompanySetupView';
+import { BankReconciliationView } from './modules/BankReconciliationView';
+import { PurchaseOrderView } from './modules/PurchaseOrderView';
+import { ReprocessView } from './modules/ReprocessView';
+import { PackingListView } from './modules/PackingListView';
 
 import { auth, type Session } from './lib/api';
+import { clearApiCache } from './lib/useApi';
 import { LogOut } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
-  const [activeModule, setActiveModule] = useState<string>('dashboard');
+  const validModules = useMemo(() => new Set(NAV.flatMap(group => group.items.map(item => item.id))), []);
+  const moduleFromUrl = () => {
+    const requested = window.location.hash.replace(/^#\/?/, '');
+    return validModules.has(requested) ? requested : 'dashboard';
+  };
+  const [activeModule, setActiveModule] = useState<string>(() => moduleFromUrl());
+  const [openModules, setOpenModules] = useState<string[]>(() => [moduleFromUrl()]);
+  const labels = useMemo(() => new Map(
+    NAV.flatMap(group => group.items.map(item => [item.id, item.label] as const))
+  ), []);
+
+  useEffect(() => {
+    const sync = () => setActiveModule(moduleFromUrl());
+    window.addEventListener('popstate', sync);
+    window.addEventListener('hashchange', sync);
+    return () => {
+      window.removeEventListener('popstate', sync);
+      window.removeEventListener('hashchange', sync);
+    };
+  // validModules is stable for the lifetime of the application.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const navigate = (module: string) => {
+    if (!validModules.has(module)) return;
+    setOpenModules(current => current.includes(module)
+      ? current
+      : [...current.slice(-7), module]);
+    if (module !== activeModule) window.history.pushState(null, '', `#/${module}`);
+    setActiveModule(module);
+  };
+
+  useEffect(() => {
+    setOpenModules(current => current.includes(activeModule)
+      ? current
+      : [...current.slice(-7), activeModule]);
+  }, [activeModule]);
+
+  const closeModule = (module: string) => {
+    setOpenModules(current => {
+      if (current.length === 1) return current;
+      const index = current.indexOf(module);
+      if (index < 0) return current;
+      const remaining = current.filter(id => id !== module);
+      if (module === activeModule) {
+        const next = remaining[Math.min(index, remaining.length - 1)]!;
+        window.history.replaceState(null, '', `#/${next}`);
+        setActiveModule(next);
+      }
+      return remaining;
+    });
+  };
 
   // The browser session is an HttpOnly cookie. Ask the server whether it is
   // still valid; there is deliberately no bearer token in web storage.
@@ -65,11 +125,54 @@ export const App: React.FC = () => {
 
   const signOut = async () => {
     try { await auth.logout(); }
-    finally { setSession(null); }
+    finally {
+      clearApiCache();
+      setSession(null);
+    }
   };
 
+  const moduleView = (module: string) => (
+    <>
+      {module in MASTERS && <MasterEditorView master={module as keyof typeof MASTERS} />}
+      {module === 'dashboard' && <DashboardView onOpen={navigate} />}
+      {module === 'approvals' && <ApprovalView session={session} />}
+      {module === 'password' && <PasswordView />}
+      {module === 'users' && <UserAdminView session={session} />}
+      {module === 'company_setup' && <CompanySetupView />}
+      {module === 'profit_loss' && <StatementView kind="profit_loss" />}
+      {module === 'balance_sheet' && <StatementView kind="balance_sheet" />}
+      {module === 'delivery_challans' && <DeliveryChallanView />}
+      {module === 'itc04' && <Itc04View />}
+      {module === 'eway_bills' && <EwayBillView />}
+      {module === 'grey_inward' && <LiveGreyInwardView />}
+      {module === 'dyeing_issue' && <ScanDocumentView kind="issue" />}
+      {module === 'grey_return' && <ScanDocumentView kind="grey_return" />}
+      {module === 'dyeing_return' && <ScanDocumentView kind="dyeing_return" />}
+      {module === 'customer_return' && <ScanDocumentView kind="customer_return" />}
+      {module === 'write_off' && <ScanDocumentView kind="write_off" />}
+      {module === 'dyeing_receipt' && <DyeingReceiptView />}
+      {module === 'reprocess' && <ReprocessView />}
+      {module === 'cut_pack' && <ScanDocumentView kind="pack" />}
+      {module === 'regroup' && <PieceRegroupView session={session} />}
+      {module === 'stock_count' && <StockCountView />}
+      {module === 'dispatch' && <ScanDocumentView kind="dispatch" />}
+      {module === 'packing_lists' && <PackingListView />}
+      {module === 'purchase_orders' && <PurchaseOrderView />}
+      {module === 'sales_orders' && <SalesOrderView />}
+      {module === 'year_close' && <YearCloseView />}
+      {module === 'payments' && <PaymentView />}
+      {module === 'bank_reconciliation' && <BankReconciliationView session={session} />}
+      {module === 'audit_trail' && <AuditTrailView />}
+      {module === 'labels' && <BarcodeLabelView session={session} />}
+      {module === 'sales_invoices' && <SalesInvoiceView session={session} />}
+      {module === 'purchase_invoices' && <PurchaseInvoiceView />}
+      {module === 'gst_notes' && <GstNoteView />}
+      {module in REPORTS && <LiveReportView report={module as keyof typeof REPORTS} onOpen={navigate} />}
+    </>
+  );
+
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#dce5f0] text-slate-800 font-sans overflow-hidden">
+    <div className="flex flex-col min-h-screen h-[100dvh] w-screen bg-[#dce5f0] text-slate-800 font-sans overflow-hidden">
       <CompanyBanner
         legalName={session.tenant?.legalName ?? '—'}
         gstin={session.tenant?.gstin ?? '—'}
@@ -77,11 +180,11 @@ export const App: React.FC = () => {
         online
       />
 
-      <div className="flex items-stretch">
+      <div className="flex flex-col md:flex-row md:items-stretch">
         <div className="flex-1 min-w-0">
-          <ModuleNav activeModule={activeModule} onSelect={setActiveModule} />
+          <ModuleNav activeModule={activeModule} onSelect={navigate} role={session.role} />
         </div>
-        <div className="bg-[#cbd5e1] border-b border-[#94a3b8] px-3 flex items-center gap-2 text-xs">
+        <div className="bg-[#cbd5e1] border-b border-[#94a3b8] px-3 py-1 flex items-center justify-end gap-2 text-xs min-h-11">
           <OfflineBadge />
           <span className="bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded border border-emerald-300 font-mono font-bold">
             {session.role}
@@ -93,42 +196,19 @@ export const App: React.FC = () => {
         </div>
       </div>
 
-      <ErrorBoundary key={activeModule}>
+      <WorkspaceTabs
+        tabs={openModules.map(id => ({ id, label: labels.get(id) ?? id }))}
+        activeId={activeModule} onSelect={navigate} onClose={closeModule}
+      />
       <div className="flex-1 overflow-hidden relative">
-        {activeModule in MASTERS && (
-          <MasterEditorView master={activeModule as keyof typeof MASTERS} />
-        )}
-        {activeModule === 'dashboard' && <DashboardView onOpen={setActiveModule} />}
-        {activeModule === 'approvals' && <ApprovalView session={session} />}
-        {activeModule === 'profit_loss' && <StatementView kind="profit_loss" />}
-        {activeModule === 'balance_sheet' && <StatementView kind="balance_sheet" />}
-        {activeModule === 'delivery_challans' && <DeliveryChallanView />}
-        {activeModule === 'itc04' && <Itc04View />}
-        {activeModule === 'eway_bills' && <EwayBillView />}
-        {activeModule === 'grey_inward' && <LiveGreyInwardView />}
-        {activeModule === 'dyeing_issue' && <ScanDocumentView kind="issue" />}
-        {activeModule === 'grey_return' && <ScanDocumentView kind="grey_return" />}
-        {activeModule === 'dyeing_return' && <ScanDocumentView kind="dyeing_return" />}
-        {activeModule === 'customer_return' && <ScanDocumentView kind="customer_return" />}
-        {activeModule === 'write_off' && <ScanDocumentView kind="write_off" />}
-        {activeModule === 'dyeing_receipt' && <DyeingReceiptView />}
-        {activeModule === 'cut_pack' && <ScanDocumentView kind="pack" />}
-        {activeModule === 'regroup' && <PieceRegroupView session={session} />}
-        {activeModule === 'stock_count' && <StockCountView />}
-        {activeModule === 'dispatch' && <ScanDocumentView kind="dispatch" />}
-        {activeModule === 'sales_orders' && <SalesOrderView />}
-        {activeModule === 'year_close' && <YearCloseView />}
-        {activeModule === 'payments' && <PaymentView />}
-        {activeModule === 'audit_trail' && <AuditTrailView />}
-        {activeModule === 'labels' && <BarcodeLabelView session={session} />}
-        {activeModule === 'sales_invoices' && <SalesInvoiceView session={session} />}
-        {activeModule === 'purchase_invoices' && <PurchaseInvoiceView />}
-        {activeModule === 'gst_notes' && <GstNoteView />}
-        {activeModule in REPORTS && (
-          <LiveReportView report={activeModule as keyof typeof REPORTS} onOpen={setActiveModule} />
-        )}
+        {openModules.map(module => (
+          <section key={module} role="tabpanel" id={`workspace-panel-${module}`}
+            aria-labelledby={`workspace-tab-${module}`}
+            className={module === activeModule ? 'h-full' : 'hidden'}>
+            <ErrorBoundary>{moduleView(module)}</ErrorBoundary>
+          </section>
+        ))}
       </div>
-      </ErrorBoundary>
 
       <StatusBar
         currentForm={activeModule}

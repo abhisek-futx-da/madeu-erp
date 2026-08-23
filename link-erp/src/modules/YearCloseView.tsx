@@ -6,7 +6,7 @@ import { AlertTriangle, CheckCircle2, Lock, Unlock } from 'lucide-react';
 
 interface YearRow {
   label: string; starts_on: string; ends_on: string;
-  status: 'open' | 'closing' | 'closed'; closed_at: string | null;
+  status: 'open' | 'pending' | 'closing' | 'closed'; closed_at: string | null;
 }
 
 interface TrialRow { balance: number }
@@ -126,7 +126,7 @@ export const YearCloseView: React.FC = () => {
                       >
                         {busy === y.label ? 'Closing…' : `Close ${y.label}`}
                       </button>
-                    ) : (
+                    ) : y.status === 'closed' ? (
                       <button
                         onClick={() => act(y.label, 'reopen')}
                         disabled={busy === y.label}
@@ -134,7 +134,7 @@ export const YearCloseView: React.FC = () => {
                       >
                         {busy === y.label ? 'Reopening…' : 'Reopen'}
                       </button>
-                    )}
+                    ) : <span className="text-slate-500">Awaiting prior-year close</span>}
                   </td>
                 </tr>
               ))}

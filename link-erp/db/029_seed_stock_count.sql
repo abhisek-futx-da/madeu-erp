@@ -39,6 +39,23 @@ insert into document_series (tenant_id, doc_type, fy_label, prefix, next_number)
   ('11111111-1111-1111-1111-111111111111','stock_count','2026-27','SC/26-27/',1)
 on conflict (tenant_id, doc_type, fy_label) do nothing;
 
+-- The same demo seed is used by the upgrade rehearsal before migration 046.
+-- Add reprocess defaults only after that workflow and its expanded approval
+-- constraint exist; clean installs reach this branch, legacy setup does not.
+do $$
+begin
+  if to_regclass('public.dyeing_reprocess_receipt') is not null then
+    insert into approval_rule (tenant_id, doc_type, min_amount, approver_role) values
+      ('11111111-1111-1111-1111-111111111111','dyeing_reprocess_receipt',0,'accounts')
+    on conflict (tenant_id, doc_type) do nothing;
+
+    insert into document_series (tenant_id, doc_type, fy_label, prefix, next_number) values
+      ('11111111-1111-1111-1111-111111111111','dyeing_reprocess','2026-27','RP/26-27/',1),
+      ('11111111-1111-1111-1111-111111111111','dyeing_reprocess_receipt','2026-27','RR/26-27/',1)
+    on conflict (tenant_id, doc_type, fy_label) do nothing;
+  end if;
+end $$;
+
 -- Give the demo stock a shelf, so "wrong rack" means something on day one.
 update piece set rack_code = case when status = 'grey_in_stock' then 'A1' else 'B1' end
  where tenant_id = '11111111-1111-1111-1111-111111111111'

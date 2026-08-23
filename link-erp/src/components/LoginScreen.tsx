@@ -10,6 +10,8 @@ export const LoginScreen: React.FC<Props> = ({ onSignedIn }) => {
   // Convenience for the demo build only; production starts empty.
   const [email, setEmail] = useState(import.meta.env.DEV ? 'owner@neelkamal.test' : '');
   const [password, setPassword] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -18,7 +20,11 @@ export const LoginScreen: React.FC<Props> = ({ onSignedIn }) => {
     setBusy(true);
       setError(null);
       try {
-      const out = await auth.login(email, password);
+      const out = await auth.login(email, password, mfaRequired ? mfaCode : undefined);
+      if ('mfaRequired' in out) {
+        setMfaRequired(true);
+        return;
+      }
       onSignedIn(out.tenant, out.role);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'sign in failed');
@@ -54,7 +60,7 @@ export const LoginScreen: React.FC<Props> = ({ onSignedIn }) => {
           <label className="erp-label block" htmlFor="email">Email</label>
           <input
             id="email" type="email" required autoComplete="username"
-            value={email} onChange={e => setEmail(e.target.value)}
+            value={email} onChange={e => { setEmail(e.target.value); setMfaRequired(false); setMfaCode(''); }}
             className="erp-input w-full"
           />
         </div>
@@ -63,17 +69,27 @@ export const LoginScreen: React.FC<Props> = ({ onSignedIn }) => {
           <label className="erp-label block" htmlFor="password">Password</label>
           <input
             id="password" type="password" required autoComplete="current-password"
-            value={password} onChange={e => setPassword(e.target.value)}
+            value={password} onChange={e => { setPassword(e.target.value); setMfaRequired(false); setMfaCode(''); }}
             className="erp-input w-full"
           />
         </div>
+
+        {mfaRequired && (
+          <div>
+            <label className="erp-label block" htmlFor="mfa-code">Authenticator or recovery code</label>
+            <input id="mfa-code" required autoComplete="one-time-code" inputMode="numeric"
+              value={mfaCode} onChange={e => setMfaCode(e.target.value)} autoFocus
+              className="erp-input w-full font-mono tracking-widest" />
+            <p className="mt-1 text-[11px] text-slate-600">Your password was accepted. Enter the six-digit code, or one unused recovery code.</p>
+          </div>
+        )}
 
         <button
           type="submit" disabled={busy}
           className="erp-btn erp-btn-primary font-bold w-full justify-center py-1.5 disabled:opacity-60"
         >
           <LogIn className="w-3.5 h-3.5" />
-          <span>{busy ? 'Signing in…' : 'Sign In'}</span>
+          <span>{busy ? 'Signing in…' : mfaRequired ? 'Verify & Sign In' : 'Sign In'}</span>
         </button>
       </form>
     </div>

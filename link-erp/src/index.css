@@ -39,6 +39,7 @@
   align-items: center;
   gap: 0.375rem;
   cursor: pointer;
+  min-height: 2.75rem;
 }
 .erp-btn:hover {
   border-color: #3b82f6;
@@ -52,12 +53,12 @@
 .erp-btn-primary,
 .erp-btn-primary:hover {
   background-image: none;
-  background-color: #059669;
-  border-color: #047857;
+  background-color: #047857;
+  border-color: #065f46;
   color: #ffffff;
 }
 .erp-btn-primary:hover {
-  background-color: #047857;
+  background-color: #065f46;
 }
 
 .erp-input {
@@ -67,6 +68,7 @@
   border-radius: 0.25rem;
   color: #0f172a;
   font-size: 0.75rem;
+  min-height: 2.75rem;
 }
 .erp-input:focus {
   outline: none;
@@ -80,6 +82,13 @@
   color: #475569;
   margin-bottom: 0.125rem;
 }
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid #f59e0b;
+  outline-offset: 2px;
+}
+
+button:disabled { cursor: not-allowed; }
 
 /* ------------------------------------------------------------------ print --
    Screens are not documents. Everything that is not the printable area is

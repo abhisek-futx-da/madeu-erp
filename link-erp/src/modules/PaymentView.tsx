@@ -159,33 +159,33 @@ export const PaymentView: React.FC = () => {
       )}
 
       <div className="flex-1 overflow-auto p-3 space-y-3">
-        <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-12 gap-2.5">
-          <div className="col-span-2">
-            <label className="erp-label block text-red-700 font-bold">* Type</label>
-            <select value={kind}
+        <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-1 md:grid-cols-12 gap-2.5">
+          <div className="md:col-span-2">
+            <label htmlFor="payment-type" className="erp-label block text-red-700 font-bold">* Type</label>
+            <select id="payment-type" value={kind}
                     onChange={e => { setKind(e.target.value as 'receipt' | 'payment'); setAllocs([]); }}
                     className="erp-input w-full">
               <option value="receipt">Receipt — from a customer</option>
               <option value="payment">Payment — to a supplier</option>
             </select>
           </div>
-          <div className="col-span-3">
-            <label className="erp-label block text-red-700 font-bold">* Party</label>
-            <select value={partyId}
+          <div className="md:col-span-3">
+            <label htmlFor="payment-party" className="erp-label block text-red-700 font-bold">* Party</label>
+            <select id="payment-party" value={partyId}
                     onChange={e => { setPartyId(e.target.value); setAllocs([]); }}
                     className="erp-input w-full">
               <option value="">— select —</option>
               {parties.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block">Date</label>
-            <input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)}
+          <div className="md:col-span-2">
+            <label htmlFor="payment-date" className="erp-label block">Date</label>
+            <input id="payment-date" type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)}
                    className="erp-input w-full" />
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block text-red-700 font-bold">* Mode</label>
-            <select value={mode} onChange={e => setMode(e.target.value as typeof mode)}
+          <div className="md:col-span-2">
+            <label htmlFor="payment-mode" className="erp-label block text-red-700 font-bold">* Mode</label>
+            <select id="payment-mode" value={mode} onChange={e => setMode(e.target.value as typeof mode)}
                     className="erp-input w-full">
               <option value="neft">NEFT</option>
               <option value="rtgs">RTGS</option>
@@ -194,39 +194,39 @@ export const PaymentView: React.FC = () => {
               <option value="cash">Cash</option>
             </select>
           </div>
-          <div className="col-span-3">
-            <label className="erp-label block">
+          <div className="md:col-span-3">
+            <label htmlFor="payment-bank" className="erp-label block">
               {mode === 'cash' ? 'Cash account' : 'Bank account'}
             </label>
-            <select value={bankLedgerId} onChange={e => setBankLedgerId(e.target.value)}
+            <select id="payment-bank" value={bankLedgerId} onChange={e => setBankLedgerId(e.target.value)}
                     className="erp-input w-full" disabled={mode === 'cash'}>
               <option value="">— default —</option>
               {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
 
-          <div className="col-span-2">
-            <label className="erp-label block text-red-700 font-bold">* Amount</label>
-            <input type="number" step="0.01" value={amount}
+          <div className="md:col-span-2">
+            <label htmlFor="payment-amount" className="erp-label block text-red-700 font-bold">* Amount</label>
+            <input id="payment-amount" type="number" step="0.01" value={amount}
                    onChange={e => setAmount(Number(e.target.value))}
                    className="erp-input w-full text-right font-mono font-bold" />
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block">Discount</label>
-            <input type="number" step="0.01" value={discount}
+          <div className="md:col-span-2">
+            <label htmlFor="payment-discount" className="erp-label block">Discount</label>
+            <input id="payment-discount" type="number" step="0.01" value={discount}
                    onChange={e => setDiscount(Number(e.target.value))}
                    className="erp-input w-full text-right font-mono" />
           </div>
-          <div className="col-span-3">
-            <label className="erp-label block">
+          <div className="md:col-span-3">
+            <label htmlFor="payment-reference" className="erp-label block">
               {mode === 'cheque' ? 'Cheque no.' : 'Reference / UTR'}
             </label>
-            <input value={instrumentNo} onChange={e => setInstrumentNo(e.target.value)}
+            <input id="payment-reference" value={instrumentNo} onChange={e => setInstrumentNo(e.target.value)}
                    className="erp-input w-full font-mono" disabled={mode === 'cash'} />
           </div>
-          <div className="col-span-5">
-            <label className="erp-label block">Narration</label>
-            <input value={narration} onChange={e => setNarration(e.target.value)}
+          <div className="md:col-span-5">
+            <label htmlFor="payment-narration" className="erp-label block">Narration</label>
+            <input id="payment-narration" value={narration} onChange={e => setNarration(e.target.value)}
                    className="erp-input w-full" />
           </div>
         </div>

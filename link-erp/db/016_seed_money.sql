@@ -9,7 +9,8 @@ insert into control_account (id, tenant_id, code, name, sub_control, nature) val
   ('22222222-0000-0000-0000-000000000017','11111111-1111-1111-1111-111111111111','17','Cash In Hand','Cash','cash'),
   ('22222222-0000-0000-0000-000000000092','11111111-1111-1111-1111-111111111111','92','Cost Of Goods Sold','Direct Expenses','expense'),
   ('22222222-0000-0000-0000-000000000093','11111111-1111-1111-1111-111111111111','93','Discounts Allowed','Indirect Expenses','expense'),
-  ('22222222-0000-0000-0000-000000000094','11111111-1111-1111-1111-111111111111','94','Discounts Received','Indirect Income','income')
+  ('22222222-0000-0000-0000-000000000094','11111111-1111-1111-1111-111111111111','94','Discounts Received','Indirect Income','income'),
+  ('22222222-0000-0000-0000-000000000098','11111111-1111-1111-1111-111111111111','98','Brokerage Expense','Indirect Expenses','expense')
 on conflict (tenant_id, code) do nothing;
 
 insert into ledger_account (id, tenant_id, code, name, control_account_id, gst_reg_type) values
@@ -19,7 +20,8 @@ insert into ledger_account (id, tenant_id, code, name, control_account_id, gst_r
   ('33333333-0000-0000-0000-000000000970','11111111-1111-1111-1111-111111111111','970','Cash In Hand','22222222-0000-0000-0000-000000000017','unregistered'),
   ('33333333-0000-0000-0000-000000000971','11111111-1111-1111-1111-111111111111','971','HDFC Bank - Current','22222222-0000-0000-0000-000000000016','unregistered'),
   ('33333333-0000-0000-0000-000000000980','11111111-1111-1111-1111-111111111111','980','Discount Allowed','22222222-0000-0000-0000-000000000093','unregistered'),
-  ('33333333-0000-0000-0000-000000000981','11111111-1111-1111-1111-111111111111','981','Discount Received','22222222-0000-0000-0000-000000000094','unregistered')
+  ('33333333-0000-0000-0000-000000000981','11111111-1111-1111-1111-111111111111','981','Discount Received','22222222-0000-0000-0000-000000000094','unregistered'),
+  ('33333333-0000-0000-0000-000000000982','11111111-1111-1111-1111-111111111111','982','Brokerage Expense','22222222-0000-0000-0000-000000000098','unregistered')
 on conflict (tenant_id, code) do nothing;
 
 update ledger_account set posting_role = v.role::posting_role
@@ -31,6 +33,21 @@ update ledger_account set posting_role = v.role::posting_role
  where ledger_account.tenant_id = '11111111-1111-1111-1111-111111111111'
    and ledger_account.code = v.code
    and ledger_account.posting_role is distinct from v.role::posting_role;
+
+-- In an upgrade rehearsal this seed is applied before migration 049 adds the
+-- enum value. On a fresh build 049 already exists, so bind it here; on upgrade
+-- 049 binds the same neutral ledger after adding the value.
+do $$
+begin
+  if exists (
+    select 1 from pg_enum e join pg_type t on t.oid=e.enumtypid
+     where t.typname='posting_role' and e.enumlabel='brokerage_expense'
+  ) then
+    update ledger_account set posting_role='brokerage_expense'
+     where tenant_id='11111111-1111-1111-1111-111111111111' and code='982'
+       and posting_role is null;
+  end if;
+end $$;
 
 insert into bank_account (tenant_id, ledger_id, bank_name, account_no, ifsc, branch, is_default) values
   ('11111111-1111-1111-1111-111111111111','33333333-0000-0000-0000-000000000971',

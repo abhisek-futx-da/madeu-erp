@@ -46,12 +46,12 @@ const Tile: React.FC<{
   } as const;
   return (
     <div className={`border rounded-lg p-3 shadow-2xs ${tones[tone]}`}>
-      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide opacity-70">
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide opacity-80">
         <Icon className="w-3.5 h-3.5" />
         {label}
       </div>
       <div className="text-xl font-bold tabular-nums mt-1">{value}</div>
-      {sub && <div className="text-[11px] opacity-70 mt-0.5">{sub}</div>}
+      {sub && <div className="text-[11px] opacity-80 mt-0.5">{sub}</div>}
     </div>
   );
 };
@@ -60,9 +60,9 @@ export const DashboardView: React.FC<{ onOpen?: (moduleKey: string) => void }> =
   const { data, error, loading, reload } =
     useApi<{ summary: Summary; trend: TrendRow[]; topDebtors: DebtorRow[] }>('/dashboard');
 
-  if (loading) return <div className="p-6 text-sm text-slate-500">Loading today's position…</div>;
+  if (loading) return <div className="p-6 text-sm text-slate-600" role="status">Loading today's position…</div>;
   if (error) return <div className="p-6 text-sm text-red-700">{error}</div>;
-  if (!data?.summary) return <div className="p-6 text-sm text-slate-500">No data yet.</div>;
+  if (!data?.summary) return <div className="p-6 text-sm text-slate-600">No data yet.</div>;
 
   const s = data.summary;
   const peak = Math.max(1, ...data.trend.map(t => Number(t.taxable_value)));

@@ -5,8 +5,7 @@ set local app.tenant_id = '11111111-1111-1111-1111-111111111111';
 
 insert into tenant_setting (tenant_id, key, value) values
   ('11111111-1111-1111-1111-111111111111','invoice.rounding','"nearest_rupee"'),
-  ('11111111-1111-1111-1111-111111111111','credit.enforce_limit','true'),
-  ('11111111-1111-1111-1111-111111111111','dispatch.require_invoice','false')
+  ('11111111-1111-1111-1111-111111111111','credit.enforce_limit','true')
 on conflict (tenant_id, key) do nothing;
 
 -- Tenant default, then a tighter rule for the process house we watch closely.

@@ -1,31 +1,36 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { many, one, withTenant, nextDocNumber } from './db.ts';
-import { clearSessionCookieOptions, login, requireAuth, requireWrite, sessionCookieOptions, throttleKey, tooManyAttempts, noteFailure, clearAttempts, revokeToken, SESSION_COOKIE } from './auth.ts';
+import { requireAuth, requireWrite } from './auth.ts';
+import { identityRouter, publicAuthRouter } from './auth-routes.ts';
+import { documentRouter } from './document-routes.ts';
 import { resourceRouter } from './resources.ts';
-import { postDispatch, postDyeingIssue, postDyeingReceipt, postGreyInward, type Ctx } from './domain.ts';
-import { raiseInvoiceForDispatch } from './invoicing.ts';
-import { recordPurchaseInvoice, raiseNote } from './purchasing.ts';
-import { submitInvoiceToIrp } from './irp-service.ts';
+import { postCutPack, type Ctx } from './domain.ts';
 import { deductionFor, recordDeduction, closeFinancialYear, reopenFinancialYear } from './tds.ts';
-import { postCutPack } from './domain.ts';
 import { recordPayment, suggestAllocation, cancelPayment } from './payments.ts';
 import { postGreyReturn, postDyeingReturn, applyGreyReturn, applyDyeingReturn, applyCustomerReturn, postCustomerReturn } from './returns.ts';
 import { postWriteOff, applyWriteOff } from './writeoff.ts';
 import { cancelDocument } from './cancellation.ts';
 import { listQuery, paged, sendCsv, type ListSpec } from './listing.ts';
-import { ewayForInvoice, ewayForChallan } from './ewaybill.ts';
-import { amountInWords } from './money.ts';
+import { operationalReportRouter } from './report-routes.ts';
 import { approveDocument, rejectDocument } from './approvals.ts';
 import { splitPiece, mergePieces, lineageOf } from './regroup.ts';
 import {
   openCount, addScans, removeScan, exceptionsFor, submitCount, applyStockCount
 } from './stockcount.ts';
+import { configurationRouter } from './configuration.ts';
+import { rateFor } from './config.ts';
+import {
+  listReconciliations, createReconciliation, getReconciliation,
+  matchStatementLine, unmatchStatementLine, completeReconciliation, cancelReconciliation
+} from './bank-reconciliation.ts';
+import { applyReprocessReceipt } from './reprocess.ts';
 
 const uuid = z.string().uuid();
 const money = z.coerce.number().finite();
 const qty = z.coerce.number().finite().nonnegative();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+const barcode = z.string().trim().min(1).max(40);
 
 /**
  * A real challan runs to a few hundred pieces. The cap keeps one request from
@@ -44,66 +49,10 @@ export function fyLabel(d = new Date()) {
 export function buildRoutes() {
   const api = Router();
 
-  api.post('/auth/login', async (req, res, next) => {
-    try {
-      const body = z.object({
-        email: z.string().email(),
-        password: z.string().min(1),
-        tenantId: uuid.optional()
-      }).parse(req.body);
-      const key = throttleKey(body.email, req.ip ?? 'unknown');
-      const waitFor = await tooManyAttempts(key);
-      if (waitFor !== null) {
-        res.setHeader('retry-after', String(waitFor));
-        return res.status(429).json({
-          error: `too many failed attempts; try again in ${waitFor} seconds`
-        });
-      }
-
-      const result = await login(body.email, body.password, body.tenantId);
-      if (!result) {
-        await noteFailure(key);
-        return res.status(401).json({ error: 'invalid credentials' });
-      }
-      await clearAttempts(key);
-      // The browser receives an HttpOnly, same-site session.  The legacy token
-      // response remains for API compatibility and the test harness; the Link
-      // ERP web application deliberately never stores or sends it.
-      res.cookie(SESSION_COOKIE, result.token, sessionCookieOptions());
-      res.setHeader('cache-control', 'no-store');
-      res.json(result);
-    } catch (e) { next(e); }
-  });
-
+  api.use(publicAuthRouter());
   api.use(requireAuth);
-
-  api.post('/auth/logout', async (req, res, next) => {
-    try {
-      if (req.session?.jti) await revokeToken(req.session.jti);
-      res.clearCookie(SESSION_COOKIE, clearSessionCookieOptions());
-      res.setHeader('cache-control', 'no-store');
-      res.json({ signedOut: true });
-    } catch (e) { next(e); }
-  });
-
-  api.get('/me', async (req, res, next) => {
-    try {
-      const { tenantId, userId, role } = req.session!;
-      const [tenant, user] = await withTenant(tenantId, userId, async db => Promise.all([
-        one<{ legal_name: string; gstin: string; fy_start: string }>(
-          db, 'select legal_name, gstin, fy_start from tenant where id = $1', [tenantId]),
-        one<{ email: string; full_name: string }>(
-          db, 'select email, full_name from app_user where id = $1', [userId])
-      ]));
-      res.json({
-        userId, tenantId, role,
-        user: user ? { email: user.email, fullName: user.full_name } : null,
-        tenant: tenant
-          ? { legalName: tenant.legal_name, gstin: tenant.gstin, fyLabel: fyLabel(new Date(tenant.fy_start)) }
-          : null
-      });
-    } catch (e) { next(e); }
-  });
+  api.use('/configuration', configurationRouter());
+  api.use(identityRouter());
 
   // ------------------------------------------------------------- documents --
 
@@ -131,64 +80,6 @@ export function buildRoutes() {
       } catch (e) { next(e); }
     });
 
-  api.post('/grey-purchase-orders', requireWrite('purchase'), async (req, res, next) => {
-    try {
-      const body = z.object({
-        partyId: uuid,
-        orderDate: isoDate,
-        shipToId: uuid.nullish(),
-        brokerId: uuid.nullish(),
-        transportId: uuid.nullish(),
-        deliveryDays: z.coerce.number().int().min(0).default(0),
-        deliveryDate: isoDate.nullish(),
-        paymentTerms: z.string().max(200).default(''),
-        remarks: z.string().max(500).default(''),
-        lines: z.array(z.object({
-          qualityId: uuid,
-          designId: uuid.nullish(),
-          gradeCode: z.string().min(1).max(20),
-          pcs: z.coerce.number().int().positive(),
-          cutLength: qty,
-          qty: qty.refine(n => n > 0, 'qty must be positive'),
-          rate: money.nonnegative()
-        })).min(1).max(MAX_DOC_LINES)
-      }).parse(req.body);
-
-      const out = await withCtx(req, async ctx => {
-        const orderNo = await nextDocNumber(ctx.db, ctx.tenantId, 'grey_po', ctx.fy);
-        const order = await one<{ id: string }>(ctx.db,
-          `insert into grey_purchase_order (tenant_id, order_no, order_date, party_id, ship_to_id,
-             broker_id, transport_id, delivery_days, delivery_date, payment_terms, remarks,
-             status, created_by)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'approved',$12) returning id`,
-          [ctx.tenantId, orderNo, body.orderDate, body.partyId, body.shipToId ?? null,
-           body.brokerId ?? null, body.transportId ?? null, body.deliveryDays,
-           body.deliveryDate ?? null, body.paymentTerms, body.remarks, ctx.userId]);
-        if (!order) throw new Error('order insert returned nothing');
-
-        await ctx.db.query(
-          `insert into grey_purchase_order_line (tenant_id, order_id, sno, quality_id, design_id,
-             grade_code, pcs, cut_length, qty, rate)
-           select $1, $2, x.sno, x.quality_id, x.design_id, x.grade_code, x.pcs, x.cut_length, x.qty, x.rate
-             from unnest($3::smallint[], $4::uuid[], $5::uuid[], $6::text[], $7::int[],
-                         $8::numeric[], $9::numeric[], $10::numeric[])
-                  as x(sno, quality_id, design_id, grade_code, pcs, cut_length, qty, rate)`,
-          [ctx.tenantId, order.id,
-           body.lines.map((_, i) => i + 1),
-           body.lines.map(l => l.qualityId),
-           body.lines.map(l => l.designId ?? null),
-           body.lines.map(l => l.gradeCode),
-           body.lines.map(l => l.pcs),
-           body.lines.map(l => l.cutLength),
-           body.lines.map(l => l.qty),
-           body.lines.map(l => l.rate)]);
-
-        return { id: order.id, orderNo };
-      });
-      res.status(201).json(out);
-    } catch (e) { next(e); }
-  });
-
   /** Header page first, then all its lines in one more statement — never per order. */
   const orderListRoute = (
     path: string, name: string, spec: ListSpec,
@@ -203,292 +94,22 @@ export function buildRoutes() {
         if (page.rows.length === 0) return page;
         const lines = await many<any>(db, lineSql, [page.rows.map(o => o.id)]);
         const byOrder = new Map<string, any[]>();
-        for (const l of lines) {
-          const bucket = byOrder.get(l.order_id);
-          if (bucket) bucket.push(l); else byOrder.set(l.order_id, [l]);
+        for (const line of lines) {
+          const bucket = byOrder.get(line.order_id);
+          if (bucket) bucket.push(line); else byOrder.set(line.order_id, [line]);
         }
-        return { ...page, rows: page.rows.map(o => ({ ...o, lines: byOrder.get(o.id) ?? [] })) };
+        return { ...page, rows: page.rows.map(order => ({
+          ...order, lines: byOrder.get(order.id) ?? []
+        })) };
       });
       if (q.format === 'csv') {
-        return sendCsv(res, name, data.rows.map(({ lines, ...head }: any) => head));
+        return sendCsv(res, name, data.rows.map(({ lines: _lines, ...head }: any) => head));
       }
       res.json(data);
     } catch (e) { next(e); }
   });
 
-  orderListRoute('/grey-purchase-orders', 'grey-purchase-orders', {
-    from: 'grey_purchase_order o join ledger_account l on l.id = o.party_id',
-    select: `o.id, o.order_no, o.order_date, o.status, o.delivery_date,
-             l.name as party_name, o.remarks`,
-    search: ['o.order_no', 'l.name', 'o.remarks'],
-    dateColumn: 'o.order_date',
-    orderBy: 'o.order_date desc, o.order_no desc'
-  }, `select ol.order_id, ol.sno, ol.pcs, ol.qty, ol.rate, ol.amount, ol.received_qty,
-             q.name as quality, d.name as design, ol.grade_code
-        from grey_purchase_order_line ol
-        join quality q on q.id = ol.quality_id
-        left join design d on d.id = ol.design_id
-       where ol.order_id = any($1::uuid[]) order by ol.sno`);
-
-  api.post('/grey-inwards', requireWrite('store'), async (req, res, next) => {
-    try {
-      const body = z.object({
-        partyId: uuid,
-        entryDate: isoDate,
-        challanNo: z.string().min(1).max(50),
-        challanDate: isoDate,
-        lotNo: z.string().max(50).default(''),
-        transportId: uuid.nullish(),
-        brokerId: uuid.nullish(),
-        lrNo: z.string().max(50).nullish(),
-        directIssue: z.boolean().default(false),
-        remarks: z.string().max(500).default(''),
-        rackCode: z.string().max(20).nullish(),
-        lines: z.array(z.object({
-          poLineId: uuid.nullish(),
-          qualityId: uuid,
-          designId: uuid.nullish(),
-          gradeCode: z.string().min(1).max(20),
-          barcode: z.string().min(4).max(40),
-          lotNo: z.string().max(50).default(''),
-          receivedQty: qty,
-          checkedQty: qty,
-          rate: money.nonnegative(),
-          rackCode: z.string().max(20).nullish()
-        })).min(1).max(MAX_DOC_LINES)
-      }).parse(req.body);
-      const out = await withCtx(req, ctx => postGreyInward(ctx, body, body.lines));
-      res.status(201).json(out);
-    } catch (e) { next(e); }
-  });
-
-  api.post('/dyeing-issues', requireWrite('store'), async (req, res, next) => {
-    try {
-      const body = z.object({
-        processHouseId: uuid,
-        weaverId: uuid.nullish(),
-        entryDate: isoDate,
-        challanNo: z.string().min(1).max(50),
-        challanDate: isoDate,
-        lotNo: z.string().max(50).default(''),
-        noOfBales: z.coerce.number().int().min(0).optional(),
-        vehicleNo: z.string().max(30).nullish(),
-        remarks: z.string().max(500).default(''),
-        jobRate: money.nonnegative().default(0),
-        barcodes: z.array(z.string().min(4).max(40)).min(1).max(MAX_DOC_LINES)
-      }).parse(req.body);
-      const out = await withCtx(req, ctx => postDyeingIssue(ctx, body, body.barcodes, body.jobRate));
-      res.status(201).json(out);
-    } catch (e) { next(e); }
-  });
-
-  api.post('/dyeing-receipts', requireWrite('store'), async (req, res, next) => {
-    try {
-      const body = z.object({
-        processHouseId: uuid,
-        entryDate: isoDate,
-        challanNo: z.string().min(1).max(50),
-        challanDate: isoDate,
-        remarks: z.string().max(500).default(''),
-        lines: z.array(z.object({
-          barcode: z.string().min(4).max(40),
-          receivedQty: qty,
-          finishGrade: z.string().min(1).max(20),
-          jobRate: money.nonnegative().default(0)
-        })).min(1).max(MAX_DOC_LINES)
-      }).parse(req.body);
-      const out = await withCtx(req, ctx => postDyeingReceipt(ctx, body, body.lines));
-      res.status(201).json(out);
-    } catch (e) { next(e); }
-  });
-
-  api.post('/dispatches', requireWrite('sales'), async (req, res, next) => {
-    try {
-      const body = z.object({
-        partyId: uuid,
-        challanNo: z.string().min(1).max(50),
-        challanDate: isoDate,
-        transportId: uuid.nullish(),
-        lrNo: z.string().max(50).nullish(),
-        vehicleNo: z.string().max(30).nullish(),
-        lines: z.array(z.object({
-          barcode: z.string().min(4).max(40),
-          rate: money.nonnegative(),
-          soLineId: uuid.nullish()
-        })).min(1).max(MAX_DOC_LINES)
-      }).parse(req.body);
-      const out = await withCtx(req, ctx => postDispatch(ctx, body, body.lines));
-      res.status(201).json(out);
-    } catch (e) { next(e); }
-  });
-
-  api.get('/dispatches', async (req, res, next) => {
-    try {
-      const q = listQuery.extend({ uninvoiced: z.coerce.boolean().optional() }).parse(req.query);
-      const { tenantId, userId } = req.session!;
-      const forExport = q.format === 'csv' ? { ...q, limit: 5000, offset: 0 } : q;
-      const page = await withTenant(tenantId, userId, db =>
-        paged<Record<string, unknown>>(db, {
-        from: `(select d.id, d.challan_no, d.challan_date, l.name as party_name,
-                       count(dl.id)::int as pieces,
-                       coalesce(sum(dl.qty * dl.rate), 0) as value,
-                       exists (select 1 from sales_invoice si
-                                where si.dispatch_id = d.id and si.status <> 'cancelled')
-                         as invoiced
-                  from dispatch d
-                  join ledger_account l on l.id = d.party_id
-                  left join dispatch_line dl on dl.dispatch_id = d.id
-                 where d.status <> 'cancelled'
-                 group by d.id, d.challan_no, d.challan_date, l.name) d`,
-        select: 'id, challan_no, challan_date, party_name, pieces, value, invoiced',
-        search: ['challan_no', 'party_name'],
-        dateColumn: 'challan_date',
-        orderBy: 'challan_date desc, challan_no desc',
-        where: q.uninvoiced ? 'not invoiced' : undefined
-      }, forExport));
-      if (q.format === 'csv') return sendCsv(res, 'dispatches', page.rows);
-      res.json(page);
-    } catch (e) { next(e); }
-  });
-
-  api.post('/sales-invoices', requireWrite('sales'), async (req, res, next) => {
-    try {
-      const body = z.object({
-        dispatchId: uuid,
-        invoiceDate: isoDate.optional(),
-        placeOfSupply: z.string().regex(/^\d{1,2}$/).optional(),
-        distanceKm: z.coerce.number().int().min(1).max(4000).optional()
-      }).parse(req.body);
-      const out = await withCtx(req, ctx => raiseInvoiceForDispatch(ctx, body.dispatchId, body));
-      res.status(201).json(out);
-    } catch (e) { next(e); }
-  });
-
-  listRoute('/sales-invoices', 'tax-invoices', {
-    from: `sales_invoice i
-             join ledger_account p on p.id = i.party_id
-             left join gst_document g on g.invoice_id = i.id
-             left join eway_bill e on e.source_doc = 'sales_invoice' and e.source_id = i.id
-                                  and e.status <> 'cancelled'`,
-    select: `i.id, i.invoice_no, i.invoice_date, i.place_of_supply, i.supply_type,
-             i.taxable_value, i.cgst_amount, i.sgst_amount, i.igst_amount,
-             i.party_id, i.round_off, i.invoice_total, i.status, p.name as party_name, p.gstin,
-             g.filing_status, g.irn, g.last_error, e.ewb_no, e.our_ref as ewb_ref`,
-    search: ['i.invoice_no', 'p.name', 'p.gstin'],
-    dateColumn: 'i.invoice_date',
-    orderBy: 'i.invoice_date desc, i.created_at desc'
-  });
-
-  api.get('/sales-invoices/:id/print', async (req, res, next) => {
-    try {
-      const id = uuid.parse(req.params.id);
-      const { tenantId, userId } = req.session!;
-      const out = await withTenant(tenantId, userId, async db => {
-        const head = await one<any>(db,
-          `select i.invoice_no, i.invoice_date, i.place_of_supply, i.supply_type,
-                  i.taxable_value, i.cgst_amount, i.sgst_amount, i.igst_amount,
-                  i.round_off, i.invoice_total, p.name as party_name, p.gstin,
-                  g.irn, a.line1 as party_address, a.city as party_city,
-                  a.pincode as party_pincode, a.state_code as party_state
-             from sales_invoice i
-             join ledger_account p on p.id = i.party_id
-             left join gst_document g on g.invoice_id = i.id
-             left join lateral (
-               select line1, city, pincode, state_code from ledger_address
-                where ledger_id = p.id order by is_ship_to desc, is_primary desc limit 1
-             ) a on true
-            where i.id = $1`, [id]);
-        if (!head) return null;
-        const lines = await many<any>(db,
-          `select sno, description, hsn_code, qty, uom, rate, taxable_value, gst_rate,
-                  cgst_amount, sgst_amount, igst_amount, line_total
-             from sales_invoice_line where invoice_id = $1 order by sno`, [id]);
-        return { ...head, lines, amount_in_words: amountInWords(Number(head.invoice_total)) };
-      });
-      if (!out) return res.status(404).json({ error: 'invoice not found' });
-      res.json(out);
-    } catch (e) { next(e); }
-  });
-
-  api.get('/sales-invoices/:id/einvoice', async (req, res, next) => {
-    try {
-      const { tenantId, userId } = req.session!;
-      const row = await withTenant(tenantId, userId, db =>
-        one<{ payload: unknown; filing_status: string; last_error: string | null }>(
-          db,
-          'select payload, filing_status, last_error from gst_document where invoice_id = $1',
-          [req.params.id]));
-      if (!row) return res.status(404).json({ error: 'no e-invoice payload for that invoice' });
-      res.json(row);
-    } catch (e) { next(e); }
-  });
-
-  api.post('/purchase-invoices', requireWrite('accounts'), async (req, res, next) => {
-    try {
-      const body = z.object({
-        partyId: uuid,
-        supplierInvoiceNo: z.string().min(1).max(50),
-        invoiceDate: isoDate,
-        kind: z.enum(['grey', 'jobwork']).default('grey'),
-        itcEligible: z.boolean().default(true),
-        lines: z.array(z.object({
-          hsnCode: z.string().min(4).max(10),
-          description: z.string().min(1).max(200),
-          qty: qty.refine(n => n > 0, 'qty must be positive'),
-          uom: z.string().max(10).default('MTR'),
-          rate: money.nonnegative(),
-          gstRate: z.coerce.number().min(0).max(28)
-        })).min(1).max(MAX_DOC_LINES)
-      }).parse(req.body);
-      const out = await withCtx(req, ctx => recordPurchaseInvoice(ctx, body, body.lines));
-      res.status(201).json(out);
-    } catch (e) { next(e); }
-  });
-
-  listRoute('/purchase-invoices', 'purchase-invoices', {
-    from: `purchase_invoice pi join ledger_account l on l.id = pi.party_id`,
-    select: `pi.id, pi.our_ref, pi.supplier_invoice_no, pi.invoice_date, pi.supply_type,
-             pi.is_rcm, pi.taxable_value, pi.cgst_amount, pi.sgst_amount, pi.igst_amount,
-             pi.invoice_total, pi.itc_eligible, pi.status, l.name as party_name`,
-    search: ['pi.our_ref', 'pi.supplier_invoice_no', 'l.name'],
-    dateColumn: 'pi.invoice_date',
-    orderBy: 'pi.invoice_date desc, pi.created_at desc'
-  });
-
-  api.post('/gst-notes', requireWrite('accounts'), async (req, res, next) => {
-    try {
-      const body = z.object({
-        kind: z.enum(['credit', 'debit']),
-        againstInvoiceId: uuid,
-        noteDate: isoDate,
-        reason: z.string().min(1).max(200),
-        taxableValue: money.positive()
-      }).parse(req.body);
-      const out = await withCtx(req, ctx => raiseNote(ctx, body));
-      res.status(201).json(out);
-    } catch (e) { next(e); }
-  });
-
-  listRoute('/gst-notes', 'credit-debit-notes', {
-    from: `gst_note n
-             join sales_invoice si on si.id = n.against_invoice_id
-             join ledger_account l on l.id = n.party_id`,
-    select: `n.id, n.note_no, n.note_kind, n.note_date, n.reason, n.status,
-             n.taxable_value, n.cgst_amount, n.sgst_amount, n.igst_amount, n.note_total,
-             si.invoice_no as against_invoice, l.name as party_name`,
-    search: ['n.note_no', 'si.invoice_no', 'l.name', 'n.reason'],
-    dateColumn: 'n.note_date',
-    orderBy: 'n.note_date desc, n.note_no desc'
-  });
-
-  api.post('/sales-invoices/:id/submit-irn', requireWrite('accounts'), async (req, res, next) => {
-    try {
-      const { tenantId, userId } = req.session!;
-      const id = uuid.parse(req.params.id);
-      const out = await submitInvoiceToIrp(tenantId, userId, id);
-      res.status(out.ok ? 200 : 422).json(out);
-    } catch (e) { next(e); }
-  });
+  api.use(documentRouter());
 
   // ---------------------------------------------------------- sales orders --
 
@@ -512,11 +133,21 @@ export function buildRoutes() {
           pcs: z.coerce.number().int().positive(),
           cutLength: qty,
           qty: qty.refine(n => n > 0, 'qty must be positive'),
-          rate: money.nonnegative()
+          rate: money.nonnegative().optional()
         })).min(1).max(MAX_DOC_LINES)
       }).parse(req.body);
 
       const out = await withCtx(req, async ctx => {
+        const resolvedLines: Array<(typeof body.lines)[number] & { rate: number }> = [];
+        for (const line of body.lines) {
+          if (line.rate !== undefined) {
+            resolvedLines.push({ ...line, rate: line.rate });
+            continue;
+          }
+          const contract = await rateFor(ctx.db, body.partyId, line.qualityId, 'sales', body.orderDate);
+          if (!contract) throw new Error('no sales rate is entered and no valid rate contract matches one order line');
+          resolvedLines.push({ ...line, rate: contract.rate });
+        }
         const orderNo = await nextDocNumber(ctx.db, ctx.tenantId, 'sales_order', ctx.fy);
         const order = await one<{ id: string }>(ctx.db,
           `insert into finish_sales_order (tenant_id, order_no, order_date, party_id, ship_to_id,
@@ -537,14 +168,14 @@ export function buildRoutes() {
                          $8::numeric[], $9::numeric[], $10::numeric[])
                   as x(sno, quality_id, design_id, grade_code, pcs, cut_length, qty, rate)`,
           [ctx.tenantId, order.id,
-           body.lines.map((_, i) => i + 1),
-           body.lines.map(l => l.qualityId),
-           body.lines.map(l => l.designId ?? null),
-           body.lines.map(l => l.gradeCode),
-           body.lines.map(l => l.pcs),
-           body.lines.map(l => l.cutLength),
-           body.lines.map(l => l.qty),
-           body.lines.map(l => l.rate)]);
+           resolvedLines.map((_, i) => i + 1),
+           resolvedLines.map(l => l.qualityId),
+           resolvedLines.map(l => l.designId ?? null),
+           resolvedLines.map(l => l.gradeCode),
+           resolvedLines.map(l => l.pcs),
+           resolvedLines.map(l => l.cutLength),
+           resolvedLines.map(l => l.qty),
+           resolvedLines.map(l => l.rate)]);
 
         return { id: order.id, orderNo };
       });
@@ -555,11 +186,11 @@ export function buildRoutes() {
   orderListRoute('/sales-orders', 'sales-orders', {
     from: 'finish_sales_order o join ledger_account l on l.id = o.party_id',
     select: `o.id, o.order_no, o.order_date, o.status, o.delivery_date, o.destination,
-             l.name as party_name`,
+             o.party_id, l.name as party_name`,
     search: ['o.order_no', 'l.name', 'o.destination'],
     dateColumn: 'o.order_date',
     orderBy: 'o.order_date desc, o.order_no desc'
-  }, `select sl.order_id, sl.sno, sl.pcs, sl.qty, sl.rate, sl.amount, sl.dispatched_qty,
+  }, `select sl.order_id, sl.id, sl.sno, sl.pcs, sl.qty, sl.rate, sl.amount, sl.dispatched_qty,
              q.name as quality, d.name as design, sl.grade_code
         from finish_sales_order_line sl
         join quality q on q.id = sl.quality_id
@@ -682,6 +313,79 @@ export function buildRoutes() {
     } catch (e) { next(e); }
   });
 
+  // ------------------------------------------------ bank reconciliation --
+
+  api.get('/bank-reconciliations', async (req, res, next) => {
+    try {
+      const out = await withCtx(req, ctx => listReconciliations(ctx));
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  api.post('/bank-reconciliations', requireWrite('accounts'), async (req, res, next) => {
+    try {
+      const body = z.object({
+        bankAccountId: uuid,
+        statementFrom: isoDate,
+        statementTo: isoDate,
+        openingBalance: money,
+        closingBalance: money,
+        lines: z.array(z.object({
+          txnDate: isoDate,
+          valueDate: isoDate.nullish(),
+          reference: z.string().trim().max(100).nullish(),
+          description: z.string().trim().max(500).default(''),
+          amount: money.refine(value => Math.abs(value) >= 0.005, 'amount cannot be zero')
+        })).min(1).max(5000)
+      }).parse(req.body);
+      const out = await withCtx(req, ctx => createReconciliation(ctx, body));
+      res.status(201).json(out);
+    } catch (e) { next(e); }
+  });
+
+  api.get('/bank-reconciliations/:id', async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const out = await withCtx(req, ctx => getReconciliation(ctx, id));
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  api.post('/bank-reconciliations/:id/lines/:lineId/match', requireWrite('accounts'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const lineId = uuid.parse(req.params.lineId);
+      const body = z.object({ paymentId: uuid }).parse(req.body);
+      const out = await withCtx(req, ctx => matchStatementLine(ctx, id, lineId, body.paymentId));
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  api.post('/bank-reconciliations/:id/lines/:lineId/unmatch', requireWrite('accounts'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const lineId = uuid.parse(req.params.lineId);
+      const out = await withCtx(req, ctx => unmatchStatementLine(ctx, id, lineId));
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  api.post('/bank-reconciliations/:id/complete', requireWrite('owner'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const out = await withCtx(req, ctx => completeReconciliation(ctx, id));
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  api.post('/bank-reconciliations/:id/cancel', requireWrite('accounts'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const out = await withCtx(req, ctx => cancelReconciliation(ctx, id));
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
   // --------------------------------------------------------- cancellation --
 
   api.post('/documents/:kind/:id/cancel', requireWrite('accounts'), async (req, res, next) => {
@@ -690,7 +394,7 @@ export function buildRoutes() {
         'sales_invoice', 'purchase_invoice', 'dispatch', 'grey_inward',
         'dyeing_issue', 'dyeing_receipt', 'sales_order', 'grey_purchase_order',
         'piece_regroup', 'stock_count', 'grey_return', 'dyeing_return',
-        'customer_return', 'write_off', 'gst_note'
+        'customer_return', 'write_off', 'dyeing_reprocess', 'dyeing_reprocess_receipt', 'gst_note'
       ]).parse(req.params.kind);
       const id = uuid.parse(req.params.id);
       const body = z.object({ reason: z.string().min(1).max(200) }).parse(req.body);
@@ -754,7 +458,8 @@ export function buildRoutes() {
   });
 
   const approvable = z.enum(['sales_invoice', 'purchase_invoice', 'payment', 'stock_count',
-    'grey_return', 'dyeing_return', 'customer_return', 'write_off']);
+    'grey_return', 'dyeing_return', 'customer_return', 'write_off',
+    'dyeing_reprocess_receipt']);
 
   /** Approving is a write on the document's own area, plus the rule's role. */
   // Approvals check their own roles internally
@@ -774,6 +479,7 @@ export function buildRoutes() {
             : kind === 'dyeing_return' ? ctx => applyDyeingReturn(ctx, id)
             : kind === 'customer_return' ? ctx => applyCustomerReturn(ctx, id).then(() => undefined)
             : kind === 'write_off' ? ctx => applyWriteOff(ctx, id)
+            : kind === 'dyeing_reprocess_receipt' ? ctx => applyReprocessReceipt(ctx, id)
             : undefined
         ));
       res.json(out);
@@ -830,6 +536,104 @@ export function buildRoutes() {
   });
 
   // ---------------------------------------------------------- tds / close --
+
+  api.get('/opening-balances/:label', async (req, res, next) => {
+    try {
+      const label = z.string().regex(/^\d{4}-\d{2}$/).parse(req.params.label);
+      const { tenantId, userId } = req.session!;
+      const rows = await withTenant(tenantId, userId, db => many(db,
+        `select la.id as ledger_id, la.code, la.name, ca.name as control_account,
+                ca.nature::text, coalesce(ob.debit, 0) as debit,
+                coalesce(ob.credit, 0) as credit
+           from ledger_account la
+           join control_account ca on ca.id = la.control_account_id
+           left join opening_balance ob
+             on ob.ledger_id = la.id and ob.fy_label = $1
+          where ca.nature not in ('income', 'expense') and la.is_active
+          order by ca.name, la.code`,
+        [label]
+      ));
+      res.json(rows);
+    } catch (e) { next(e); }
+  });
+
+  api.post('/opening-balances/:label', requireWrite('accounts'), async (req, res, next) => {
+    try {
+      const label = z.string().regex(/^\d{4}-\d{2}$/).parse(req.params.label);
+      const body = z.object({
+        entries: z.array(z.object({
+          ledgerId: uuid,
+          debit: money.nonnegative().default(0),
+          credit: money.nonnegative().default(0)
+        })).max(5000)
+      }).parse(req.body);
+      for (const entry of body.entries) {
+        if (entry.debit > 0 && entry.credit > 0) {
+          return res.status(400).json({ error: 'an opening ledger cannot be both debit and credit' });
+        }
+      }
+      const debitPaise = body.entries.reduce((n, e) => n + Math.round(e.debit * 100), 0);
+      const creditPaise = body.entries.reduce((n, e) => n + Math.round(e.credit * 100), 0);
+      if (debitPaise !== creditPaise) {
+        return res.status(400).json({
+          error: `opening balances are out by ₹${(Math.abs(debitPaise - creditPaise) / 100).toFixed(2)}`
+        });
+      }
+
+      const { tenantId, userId } = req.session!;
+      const out = await withTenant(tenantId, userId, async db => {
+        const fy = await one<{ status: string; starts_on: string; ends_on: string }>(
+          db,
+          `select status, starts_on::text, ends_on::text
+             from financial_year where label = $1 for update`,
+          [label]
+        );
+        if (!fy) throw new Error(`financial year ${label} does not exist`);
+        if (fy.status !== 'open') throw new Error(`financial year ${label} is ${fy.status}`);
+        const posted = await one<{ n: number }>(db,
+          `select count(*)::int as n from voucher
+            where is_posted and voucher_date between $1 and $2`,
+          [fy.starts_on, fy.ends_on]);
+        if ((posted?.n ?? 0) > 0) {
+          throw new Error(`opening balances for ${label} are locked after the first posted voucher; use an audited journal adjustment`);
+        }
+
+        const ids = [...new Set(body.entries.map(e => e.ledgerId))];
+        if (ids.length !== body.entries.length) throw new Error('an opening ledger is listed more than once');
+        if (ids.length > 0) {
+          const valid = await many<{ id: string }>(db,
+            `select la.id
+               from ledger_account la join control_account ca on ca.id = la.control_account_id
+              where la.id = any($1::uuid[]) and ca.nature not in ('income', 'expense')`,
+            [ids]);
+          if (valid.length !== ids.length) throw new Error('an opening ledger is missing or is a profit-and-loss account');
+        }
+
+        await db.query('delete from opening_balance where fy_label = $1', [label]);
+        const nonzero = body.entries.filter(e => e.debit > 0 || e.credit > 0);
+        if (nonzero.length > 0) {
+          await db.query(
+            `insert into opening_balance (tenant_id, fy_label, ledger_id, debit, credit)
+             select $1, $2, x.ledger_id, x.debit, x.credit
+               from unnest($3::uuid[], $4::numeric[], $5::numeric[])
+                    as x(ledger_id, debit, credit)`,
+            [tenantId, label, nonzero.map(e => e.ledgerId),
+             nonzero.map(e => e.debit), nonzero.map(e => e.credit)]
+          );
+        }
+        await db.query(
+          `insert into opening_balance_revision
+             (tenant_id, fy_label, created_by, total_debit, total_credit, entries)
+           values ($1,$2,$3,$4,$5,$6::jsonb)`,
+          [tenantId, label, userId, debitPaise / 100, creditPaise / 100,
+           JSON.stringify(nonzero)]
+        );
+        return { fyLabel: label, ledgers: nonzero.length,
+          totalDebit: debitPaise / 100, totalCredit: creditPaise / 100 };
+      });
+      res.json(out);
+    } catch (e) { next(e); }
+  });
 
   api.post('/tds/preview', async (req, res, next) => {
     try {
@@ -966,7 +770,6 @@ export function buildRoutes() {
 
   // --------------------------------------------------------- split / merge --
 
-  const barcode = z.string().trim().min(1).max(40);
 
   api.post('/pieces/:barcode/split', requireWrite('store'), async (req, res, next) => {
     try {
@@ -1122,320 +925,7 @@ export function buildRoutes() {
     } catch (e) { next(e); }
   });
 
-  // ------------------------------------------------- dashboard & statements --
-
-  api.get('/dashboard', async (req, res, next) => {
-    try {
-      const { tenantId, userId } = req.session!;
-      const data = await withTenant(tenantId, userId, async db => {
-        const [summary, trend, debtors] = await Promise.all([
-          one<Record<string, number>>(db, 'select * from report_dashboard()'),
-          many(db, 'select * from v_sales_trend'),
-          many(db, 'select * from v_top_debtors limit 10')
-        ]);
-        return { summary, trend, topDebtors: debtors };
-      });
-      res.json(data);
-    } catch (e) { next(e); }
-  });
-
-  const period = z.object({
-    from: isoDate.optional(),
-    to: isoDate.optional(),
-    format: z.enum(['json', 'csv']).default('json')
-  });
-
-  api.get('/statements/profit-loss', async (req, res, next) => {
-    try {
-      const q = period.parse(req.query);
-      const to = q.to ?? new Date().toISOString().slice(0, 10);
-      const from = q.from ?? `${fyLabel(new Date(to)).slice(0, 4)}-04-01`;
-      const { tenantId, userId } = req.session!;
-      const rows = await withTenant(tenantId, userId, db =>
-        many<{ section: string; amount: number }>(
-          db, 'select * from report_profit_loss($1::date, $2::date)', [from, to]));
-      if (q.format === 'csv') return sendCsv(res, `profit-loss-${from}-to-${to}`, rows);
-
-      const total = (s: string) =>
-        rows.filter(r => r.section === s).reduce((n, r) => n + Number(r.amount), 0);
-      const income = total('income');
-      const expense = total('expense');
-      res.json({
-        from, to, rows,
-        totals: { income, expense, netProfit: Math.round((income - expense) * 100) / 100 }
-      });
-    } catch (e) { next(e); }
-  });
-
-  api.get('/statements/balance-sheet', async (req, res, next) => {
-    try {
-      const q = period.parse(req.query);
-      const asOn = q.to ?? new Date().toISOString().slice(0, 10);
-      const { tenantId, userId } = req.session!;
-      const rows = await withTenant(tenantId, userId, db =>
-        many<{ section: string; amount: number }>(
-          db, 'select * from report_balance_sheet($1::date)', [asOn]));
-      if (q.format === 'csv') return sendCsv(res, `balance-sheet-as-on-${asOn}`, rows);
-
-      const total = (s: string) =>
-        rows.filter(r => r.section === s).reduce((n, r) => n + Number(r.amount), 0);
-      const assets = total('asset');
-      const liabilities = total('liability');
-      const equity = total('equity');
-      res.json({
-        asOn, rows,
-        totals: {
-          assets, liabilities, equity,
-          // Zero on a healthy set of books; anything else is a posting defect.
-          difference: Math.round((assets - liabilities - equity) * 100) / 100
-        }
-      });
-    } catch (e) { next(e); }
-  });
-
-  // ----------------------------------------------- delivery challan (Rule 55) --
-
-  api.get('/delivery-challans', async (req, res, next) => {
-    try {
-      const q = listQuery.parse(req.query);
-      const { tenantId, userId } = req.session!;
-      const forExport = q.format === 'csv' ? { ...q, limit: 5000, offset: 0 } : q;
-      const page = await withTenant(tenantId, userId, db =>
-        paged<Record<string, unknown>>(db, {
-        from: `v_delivery_challan dc
-                 left join eway_bill e on e.source_doc = 'dyeing_issue'
-                                      and e.source_id = dc.issue_id and e.status <> 'cancelled'`,
-        select: `dc.issue_id, dc.entry_no, dc.challan_no, dc.challan_date, dc.lot_no,
-                 dc.consignee_name, dc.consignee_gstin, dc.pieces, dc.total_qty,
-                 dc.taxable_value, dc.vehicle_no, dc.status,
-                 e.ewb_no, e.our_ref as ewb_ref, e.valid_until as ewb_valid_until`,
-        search: ['dc.challan_no', 'dc.consignee_name', 'dc.lot_no'],
-        dateColumn: 'dc.challan_date',
-        orderBy: 'dc.challan_date desc, dc.challan_no desc'
-      }, forExport));
-      if (q.format === 'csv') return sendCsv(res, 'delivery-challans', page.rows);
-      res.json(page);
-    } catch (e) { next(e); }
-  });
-
-  api.get('/delivery-challans/:id/print', async (req, res, next) => {
-    try {
-      const id = uuid.parse(req.params.id);
-      const { tenantId, userId } = req.session!;
-      const out = await withTenant(tenantId, userId, async db => {
-        const head = await one<any>(db, 'select * from v_delivery_challan where issue_id = $1', [id]);
-        if (!head) return null;
-        const lines = await many<any>(
-          db, 'select * from v_delivery_challan_line where issue_id = $1 order by sno', [id]);
-        return { ...head, lines, amount_in_words: amountInWords(Number(head.taxable_value)) };
-      });
-      if (!out) return res.status(404).json({ error: 'delivery challan not found' });
-      res.json(out);
-    } catch (e) { next(e); }
-  });
-
-  // ----------------------------------------------------- e-way bill (Rule 138) --
-
-  const ewayOptions = z.object({
-    distanceKm: z.coerce.number().int().min(1).max(4000),
-    transMode: z.enum(['1', '2', '3', '4']).default('1'),
-    transporterGstin: z.string().max(15).nullish(),
-    transporterName: z.string().max(120).nullish(),
-    transDocNo: z.string().max(40).nullish(),
-    transDocDate: isoDate.nullish(),
-    vehicleNo: z.string().max(20).nullish(),
-    vehicleType: z.enum(['R', 'O']).default('R')
-  });
-
-  api.post('/eway-bills/invoice/:id', requireWrite('sales'), async (req, res, next) => {
-    try {
-      const id = uuid.parse(req.params.id);
-      const body = ewayOptions.parse(req.body);
-      const out = await withCtx(req, ctx => ewayForInvoice(ctx, id, body));
-      res.status(out.ok ? 201 : 422).json(out);
-    } catch (e) { next(e); }
-  });
-
-  api.post('/eway-bills/challan/:id', requireWrite('store'), async (req, res, next) => {
-    try {
-      const id = uuid.parse(req.params.id);
-      const body = ewayOptions.parse(req.body);
-      const out = await withCtx(req, ctx => ewayForChallan(ctx, id, body));
-      res.status(out.ok ? 201 : 422).json(out);
-    } catch (e) { next(e); }
-  });
-
-  listRoute('/eway-bills', 'eway-bills', {
-    from: 'eway_bill e',
-    select: `e.id, e.our_ref, e.ewb_no, e.status, e.source_doc, e.source_id, e.doc_type,
-             e.doc_no, e.doc_date, e.sub_supply_type, e.to_gstin, e.to_state_code,
-             e.distance_km, e.vehicle_no, e.total_value, e.valid_until, e.last_error`,
-    search: ['e.our_ref', 'e.doc_no', 'e.ewb_no', 'e.vehicle_no'],
-    dateColumn: 'e.doc_date',
-    orderBy: 'e.doc_date desc, e.created_at desc'
-  });
-
-  api.get('/eway-bills/:id/payload', async (req, res, next) => {
-    try {
-      const id = uuid.parse(req.params.id);
-      const { tenantId, userId } = req.session!;
-      const row = await withTenant(tenantId, userId, db =>
-        one(db, 'select our_ref, payload, status, valid_until, last_error from eway_bill where id = $1',
-          [id]));
-      if (!row) return res.status(404).json({ error: 'e-way bill not found' });
-      res.json(row);
-    } catch (e) { next(e); }
-  });
-
-  api.post('/eway-bills/:id/cancel', requireWrite('sales'), async (req, res, next) => {
-    try {
-      const id = uuid.parse(req.params.id);
-      const body = z.object({ reason: z.string().min(1).max(200) }).parse(req.body);
-      const { tenantId, userId } = req.session!;
-      const out = await withTenant(tenantId, userId, db =>
-        one(db,
-          `update eway_bill set status = 'cancelled', last_error = $2
-            where id = $1 and status <> 'cancelled' returning our_ref, status`,
-          [id, `cancelled: ${body.reason}`]));
-      if (!out) return res.status(409).json({ error: 'already cancelled, or no such bill' });
-      res.json(out);
-    } catch (e) { next(e); }
-  });
-
-  // ---------------------------------------------------------------- ITC-04 --
-
-  api.get('/itc04/:period', async (req, res, next) => {
-    try {
-      const quarter = z.string().regex(/^Q[1-4]-\d{4}$/).parse(req.params.period);
-      const format = z.enum(['json', 'csv']).default('json').parse(req.query.format ?? 'json');
-      const { tenantId, userId } = req.session!;
-      const data = await withTenant(tenantId, userId, async db => {
-        const [sent, received, pending] = await Promise.all([
-          many<any>(db, 'select * from v_itc04_sent where return_period = $1 order by challan_date',
-            [quarter]),
-          many<any>(db, `select * from v_itc04_received where return_period = $1
-                          order by original_challan_date`, [quarter]),
-          many<any>(db, 'select * from v_itc04_pending order by days_out desc')
-        ]);
-        return { returnPeriod: quarter, sent, received, pending };
-      });
-      if (format === 'csv') {
-        return sendCsv(res, `itc04-${quarter}`, [
-          ...data.sent.map(r => ({ table: '4 (sent)', ...r })),
-          ...data.received.map(r => ({ table: '5A (received)', ...r }))
-        ]);
-      }
-      res.json(data);
-    } catch (e) { next(e); }
-  });
-
-  // -------------------------------------------------------- return filings --
-
-  api.get('/filings', async (req, res, next) => {
-    try {
-      const { tenantId, userId } = req.session!;
-      const rows = await withTenant(tenantId, userId, db =>
-        many(db, `select return_type, return_period, filed_at, arn
-                    from gst_filing order by return_period desc, return_type`));
-      res.json(rows);
-    } catch (e) { next(e); }
-  });
-
-  /**
-   * Marking a return filed freezes the period: an invoice inside it can no
-   * longer be raised or cancelled, which is what the law already requires and
-   * the system used to allow anyway.
-   */
-  api.post('/filings', requireWrite('accounts'), async (req, res, next) => {
-    try {
-      const body = z.object({
-        returnType: z.enum(['GSTR1', 'GSTR3B', 'ITC04']),
-        returnPeriod: z.string().regex(/^((0[1-9]|1[0-2])-\d{4}|Q[1-4]-\d{4})$/),
-        arn: z.string().max(30).nullish()
-      }).parse(req.body);
-      const { tenantId, userId } = req.session!;
-      const out = await withTenant(tenantId, userId, db =>
-        one(db,
-          `insert into gst_filing (tenant_id, return_type, return_period, filed_by, arn)
-           values ($1,$2,$3,$4,$5) returning return_type, return_period, filed_at`,
-          [tenantId, body.returnType, body.returnPeriod, userId, body.arn ?? null]));
-      res.status(201).json(out);
-    } catch (e) { next(e); }
-  });
-
-  api.delete('/filings/:type/:period', requireWrite('accounts'), async (req, res, next) => {
-    try {
-      if (req.session!.role !== 'owner') {
-        return res.status(403).json({ error: 'only the owner may unlock a filed period' });
-      }
-      const type = z.enum(['GSTR1', 'GSTR3B', 'ITC04']).parse(req.params.type);
-      const p = z.string().regex(/^((0[1-9]|1[0-2])-\d{4}|Q[1-4]-\d{4})$/).parse(req.params.period);
-      const { tenantId, userId } = req.session!;
-      const out = await withTenant(tenantId, userId, db =>
-        one(db,
-          `delete from gst_filing where return_type = $1 and return_period = $2
-            returning return_type, return_period`, [type, p]));
-      if (!out) return res.status(404).json({ error: 'that period is not marked filed' });
-      res.json({ ...out, unlocked: true });
-    } catch (e) { next(e); }
-  });
-
-  // --------------------------------------------------------------- reports --
-
-  const REPORTS: Record<string, string> = {
-    'barcode-history': 'v_barcode_history',
-    'process-stock': 'v_process_stock',
-    'po-pending': 'v_po_pending',
-    'party-balance': 'v_party_balance',
-    'stock-summary': 'v_stock_summary',
-    shrinkage: 'v_shrinkage_by_process_house',
-    'gstr1-b2b': 'v_gstr1_b2b',
-    'gstr1-cdnr': 'v_gstr1_cdnr',
-    'gstr1-hsn': 'v_gstr1_hsn',
-    'gstr3b-outward': 'v_gstr3b_outward',
-    'einvoice-pending': 'v_einvoice_pending',
-    'itc-summary': 'v_itc_summary',
-    'gst-liability': 'v_gst_liability',
-    'receivable-ageing': 'v_receivable_ageing',
-    'party-statement': 'v_party_statement',
-    'trial-balance': 'v_trial_balance',
-    'quality-margin': 'v_quality_margin',
-    'weaver-scorecard': 'v_weaver_scorecard',
-    'process-house-scorecard': 'v_process_house_scorecard',
-    'gstr2b-reconciliation': 'v_gstr2b_reconciliation',
-    'tds-summary': 'v_tds_summary',
-    'stock-valuation': 'v_stock_valuation',
-    'outstanding-sales': 'v_outstanding_sales',
-    'outstanding-purchases': 'v_outstanding_purchases',
-    'cash-book': 'v_cash_book',
-    'piece-drift': 'v_piece_drift',
-    'piece-lineage': 'v_piece_lineage',
-    'regroup-imbalance': 'v_regroup_imbalance',
-    'stock-count-variance': 'v_stock_count_variance',
-    'stock-count-summary': 'v_stock_count_summary'
-  };
-
-  api.get('/reports/:name', async (req, res, next) => {
-    try {
-      const name = req.params.name ?? '';
-      const view = REPORTS[name];
-      if (!view) return res.status(404).json({ error: 'unknown report' });
-      const q = z.object({
-        limit: z.coerce.number().int().min(1).max(5000).default(500),
-        offset: z.coerce.number().int().min(0).default(0),
-        format: z.enum(['json', 'csv']).default('json')
-      }).parse(req.query);
-      const { tenantId, userId } = req.session!;
-      // An export is the whole report; a screen only ever asks for a page of it.
-      const limit = q.format === 'csv' ? 20000 : q.limit;
-      const offset = q.format === 'csv' ? 0 : q.offset;
-      const rows = await withTenant(tenantId, userId, db =>
-        many<Record<string, unknown>>(db, `select * from ${view} limit $1 offset $2`,
-          [limit, offset]));
-      if (q.format === 'csv') return sendCsv(res, name, rows);
-      res.json(rows);
-    } catch (e) { next(e); }
-  });
+  api.use(operationalReportRouter());
 
   // Last: its /:resource wildcard would otherwise shadow every route above.
   api.use('/', resourceRouter());

@@ -18,12 +18,13 @@ let owner = '';
 let store = '';
 const stamp = Date.now();
 
-async function api(path: string, opts: { method?: string; body?: unknown; token?: string } = {}) {
+async function api(path: string, opts: { method?: string; body?: unknown; token?: string; headers?: Record<string, string> } = {}) {
   const res = await fetch(`${BASE}${path}`, {
     method: opts.method ?? 'GET',
     headers: {
       'content-type': 'application/json',
-      authorization: `Bearer ${opts.token ?? owner}`
+      authorization: `Bearer ${opts.token ?? owner}`,
+      ...opts.headers
     },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body)
   });
@@ -151,6 +152,39 @@ test('a token signed with the wrong secret is refused', async () => {
   );
   const r = await api('/api/ledgers', { token: forged });
   assert.equal(r.status, 401);
+});
+
+test('a planned signing-key rotation does not throw active users out', async () => {
+  const previous = (process.env.JWT_PREVIOUS_SECRETS ?? '').split(',')[0]?.trim();
+  assert.ok(previous, 'the test server needs one previous signing key');
+  const decoded = jwt.decode(owner) as jwt.JwtPayload;
+  const { iat: _iat, exp: _exp, ...claims } = decoded;
+  const rotating = jwt.sign(claims, previous, { expiresIn: '1h', keyid: 'previous' });
+  const r = await api('/api/ledgers?limit=1', { token: rotating });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+});
+
+test('every response has a safe trace id and preserves a valid caller id', async () => {
+  const generated = await fetch(`${BASE}/health`);
+  assert.match(generated.headers.get('x-request-id') ?? '', /^[A-Za-z0-9._:-]{1,100}$/);
+
+  const supplied = await fetch(`${BASE}/health`, { headers: { 'x-request-id': 'mill-incident-42' } });
+  assert.equal(supplied.headers.get('x-request-id'), 'mill-incident-42');
+
+  const unsafe = await fetch(`${BASE}/health`, { headers: { 'x-request-id': 'bad id with spaces' } });
+  assert.notEqual(unsafe.headers.get('x-request-id'), 'bad id with spaces');
+});
+
+test('a browser-declared cross-site write is refused before authentication', async () => {
+  const r = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' },
+    body: JSON.stringify({ email: 'owner@neelkamal.test', password: 'changeme' })
+  });
+  assert.equal(r.status, 403);
+  const body = await r.json() as { error: string; requestId: string };
+  assert.equal(body.error, 'cross-site write refused');
+  assert.ok(body.requestId);
 });
 
 test('an expired token is refused', async () => {

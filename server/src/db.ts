@@ -1,16 +1,56 @@
 import pg from 'pg';
 
-// numeric/int8 arrive as strings by default; the API speaks numbers.
-pg.types.setTypeParser(pg.types.builtins.NUMERIC, Number);
-pg.types.setTypeParser(pg.types.builtins.INT8, Number);
+const DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.(\d+))?$/;
+
+/**
+ * The JSON API speaks numbers, but PostgreSQL deliberately returns NUMERIC as
+ * text because an arbitrary decimal may not survive IEEE-754. Every NUMERIC in
+ * this schema has a bounded scale; accept it only when its scaled integer is
+ * still inside JavaScript's exact-integer range. A future migration that
+ * widens a value past that contract now fails loudly instead of corrupting a
+ * ledger silently.
+ */
+export function parsePgNumeric(value: string): number {
+  const match = DECIMAL.exec(value);
+  if (!match) throw new Error(`invalid PostgreSQL numeric: ${value}`);
+  const negative = value.startsWith('-');
+  const unsigned = negative ? value.slice(1) : value;
+  const scaled = BigInt(unsigned.replace('.', ''));
+  if (scaled > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError(`PostgreSQL numeric exceeds the exact API boundary: ${value}`);
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new RangeError(`PostgreSQL numeric is not finite: ${value}`);
+  return parsed;
+}
+
+export function parsePgInt8(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new RangeError(`PostgreSQL int8 exceeds the exact API boundary: ${value}`);
+  }
+  return parsed;
+}
+
+pg.types.setTypeParser(pg.types.builtins.NUMERIC, parsePgNumeric);
+pg.types.setTypeParser(pg.types.builtins.INT8, parsePgInt8);
 // A DATE is a calendar date. Parsing it into a JS Date shifts it by the local
 // UTC offset, so 2026-09-10 comes back as the 9th anywhere east of Greenwich.
 pg.types.setTypeParser(pg.types.builtins.DATE, (v: string) => v);
 
-export const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: Number(process.env.PG_POOL_MAX ?? 10)
-});
+// Production passes discrete PG* values so an arbitrary strong password does
+// not have to be URL-encoded into a connection string. Tests may still use a
+// Unix-socket DATABASE_URL for their disposable database.
+export const pool = new pg.Pool(process.env.DATABASE_URL
+  ? { connectionString: process.env.DATABASE_URL, max: Number(process.env.PG_POOL_MAX ?? 10) }
+  : {
+      host: process.env.PGHOST,
+      port: Number(process.env.PGPORT ?? 5432),
+      database: process.env.PGDATABASE,
+      user: process.env.PGUSER,
+      password: process.env.PGPASSWORD,
+      max: Number(process.env.PG_POOL_MAX ?? 10)
+    });
 
 export type Db = pg.PoolClient;
 

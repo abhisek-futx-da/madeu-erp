@@ -3,7 +3,7 @@ import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { usePagedList } from '../lib/usePagedList';
 import { ListControls } from '../components/ListControls';
 import { useApi, useSubmit } from '../lib/useApi';
-import type { GradeRow, LedgerRow, QualityRow } from '../lib/api';
+import { api, type GradeRow, type LedgerRow, type QualityRow } from '../lib/api';
 import { AlertTriangle, CheckCircle2, Plus, Trash2 } from 'lucide-react';
 
 interface Line {
@@ -55,6 +55,14 @@ export const SalesOrderView: React.FC = () => {
 
   const lineQty = (l: Line) => l.pcs * l.cutLength;
   const total = lines.reduce((n, l) => n + lineQty(l) * l.rate, 0);
+  const applyMasterRate = async (i: number) => {
+    if (!partyId) { setNotice('pick a customer before looking up a sales rate'); return; }
+    try {
+      const found = await api.get<{ rate: number }>(`/configuration/rate?partyId=${partyId}&qualityId=${lines[i]!.qualityId}&kind=sales&date=${orderDate}`);
+      update(i, { rate: Number(found.rate) });
+      setNotice(`Sales rate ${money(Number(found.rate))} applied from the valid contract`);
+    } catch (e) { setNotice(e instanceof Error ? e.message : String(e)); }
+  };
 
   const save = async () => {
     if (!partyId || lines.length === 0) {
@@ -92,33 +100,33 @@ export const SalesOrderView: React.FC = () => {
       )}
 
       <div className="flex-1 overflow-auto p-3 space-y-3">
-        <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-12 gap-2.5">
-          <div className="col-span-4">
-            <label className="erp-label block text-red-700 font-bold">* Customer</label>
-            <select value={partyId} onChange={e => setPartyId(e.target.value)} className="erp-input w-full">
+        <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-1 md:grid-cols-12 gap-2.5">
+          <div className="md:col-span-4">
+            <label htmlFor="order-customer" className="erp-label block text-red-700 font-bold">* Customer</label>
+            <select id="order-customer" value={partyId} onChange={e => setPartyId(e.target.value)} className="erp-input w-full">
               <option value="">— select —</option>
               {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block">Order Date</label>
-            <input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)}
+          <div className="md:col-span-2">
+            <label htmlFor="order-date" className="erp-label block">Order Date</label>
+            <input id="order-date" type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)}
                    className="erp-input w-full" />
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block">Destination</label>
-            <input value={destination} onChange={e => setDestination(e.target.value)}
+          <div className="md:col-span-2">
+            <label htmlFor="order-destination" className="erp-label block">Destination</label>
+            <input id="order-destination" value={destination} onChange={e => setDestination(e.target.value)}
                    className="erp-input w-full" />
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block">Delivery Days</label>
-            <input type="number" value={deliveryDays}
+          <div className="md:col-span-2">
+            <label htmlFor="order-delivery-days" className="erp-label block">Delivery Days</label>
+            <input id="order-delivery-days" type="number" value={deliveryDays}
                    onChange={e => setDeliveryDays(Number(e.target.value))}
                    className="erp-input w-full font-mono" />
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block">Payment Terms</label>
-            <input value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)}
+          <div className="md:col-span-2">
+            <label htmlFor="order-payment-terms" className="erp-label block">Payment Terms</label>
+            <input id="order-payment-terms" value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)}
                    className="erp-input w-full" />
           </div>
         </div>
@@ -150,31 +158,32 @@ export const SalesOrderView: React.FC = () => {
               {lines.map((l, i) => (
                 <tr key={i} className="border-b border-slate-100">
                   <td className="px-2 py-1">
-                    <select value={l.qualityId} onChange={e => update(i, { qualityId: e.target.value })}
+                    <select aria-label={`Quality for sales order line ${i + 1}`} value={l.qualityId} onChange={e => update(i, { qualityId: e.target.value })}
                             className="erp-input w-40">
                       {(qualities.data ?? []).map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
                     </select>
                   </td>
                   <td className="px-2 py-1">
-                    <select value={l.gradeCode} onChange={e => update(i, { gradeCode: e.target.value })}
+                    <select aria-label={`Grade for sales order line ${i + 1}`} value={l.gradeCode} onChange={e => update(i, { gradeCode: e.target.value })}
                             className="erp-input w-28">
                       {(grades.data ?? []).map(g => <option key={g.code} value={g.code}>{g.name}</option>)}
                     </select>
                   </td>
                   <td className="px-2 py-1 text-right">
-                    <input type="number" value={l.pcs} onChange={e => update(i, { pcs: Number(e.target.value) })}
+                    <input aria-label={`Pieces for sales order line ${i + 1}`} type="number" value={l.pcs} onChange={e => update(i, { pcs: Number(e.target.value) })}
                            className="erp-input w-20 text-right font-mono" />
                   </td>
                   <td className="px-2 py-1 text-right">
-                    <input type="number" step="0.01" value={l.cutLength}
+                    <input aria-label={`Cut length for sales order line ${i + 1}`} type="number" step="0.01" value={l.cutLength}
                            onChange={e => update(i, { cutLength: Number(e.target.value) })}
                            className="erp-input w-20 text-right font-mono" />
                   </td>
                   <td className="px-2 py-1 text-right font-mono">{lineQty(l).toFixed(2)}</td>
                   <td className="px-2 py-1 text-right">
-                    <input type="number" step="0.01" value={l.rate}
+                    <input aria-label={`Rate for sales order line ${i + 1}`} type="number" step="0.01" value={l.rate}
                            onChange={e => update(i, { rate: Number(e.target.value) })}
                            className="erp-input w-20 text-right font-mono" />
+                    <button type="button" onClick={() => void applyMasterRate(i)} className="erp-btn ml-1" title="Apply valid sales rate contract">Master</button>
                   </td>
                   <td className="px-2 py-1 text-right font-mono">{money(lineQty(l) * l.rate)}</td>
                   <td className="px-2 py-1 text-right">

@@ -45,6 +45,7 @@ test('sign in', async () => {
 // ----------------------------------------------------------- sales orders --
 
 let salesOrderId = '';
+let salesOrderLineId = '';
 
 test('a sales order is booked with its lines', async () => {
   const r = await api('/api/sales-orders', {
@@ -67,6 +68,7 @@ test('a sales order is booked with its lines', async () => {
   assert.ok(mine, 'the order should be listed');
   assert.equal(mine.lines.length, 2);
   assert.equal(Number(mine.lines[0].amount), 80000);
+  salesOrderLineId = mine.lines[1].id;
 });
 
 test('a sales order with no lines is refused', async () => {
@@ -75,6 +77,33 @@ test('a sales order with no lines is refused', async () => {
     body: { partyId: MADURAI, orderDate: '2026-09-01', lines: [] }
   });
   assert.equal(r.status, 400);
+});
+
+test('the sales rate master resolves a missing order-line rate', async () => {
+  const config = await api('/api/configuration');
+  const existing = config.body.rates.find((rate: any) =>
+    rate.party_id === MADURAI && rate.quality_id === GALAXY && rate.kind === 'sales');
+  assert.ok(existing?.id, 'the demo sales rate must be visible for controlled editing');
+  const saved = await api('/api/configuration/rates', {
+    method: 'POST',
+    body: {
+      id: existing.id, partyId: MADURAI, qualityId: GALAXY, kind: 'sales', rate: 82.5,
+      validFrom: '2026-04-01', validTo: null
+    }
+  });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+
+  const made = await api('/api/sales-orders', {
+    method: 'POST',
+    body: {
+      partyId: MADURAI, orderDate: '2026-09-01', destination: 'rate master proof',
+      lines: [{ qualityId: GALAXY, gradeCode: 'A', pcs: 1, cutLength: 10, qty: 10 }]
+    }
+  });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  const listed = await api(`/api/sales-orders?q=${encodeURIComponent(made.body.orderNo)}`);
+  assert.equal(Number(listed.body.rows[0].lines[0].rate), 82.5);
+  assert.equal(Number(listed.body.rows[0].lines[0].amount), 825);
 });
 
 // -------------------------------------------------------------- cut / pack --
@@ -134,13 +163,38 @@ test('cut-pack is its own recorded step, not a side effect of dispatch', async (
     method: 'POST',
     body: {
       partyId: MADURAI, challanNo: `CPDC-${stamp}`, challanDate: '2026-09-10',
-      lines: barcodes.map(b => ({ barcode: b, rate: 80 }))
+      lines: barcodes.map(b => ({ barcode: b, rate: 85, soLineId: salesOrderLineId }))
     }
   });
-  assert.equal(d.status, 201);
+  assert.equal(d.status, 201, JSON.stringify(d.body));
   const after = await api(`/api/pieces/${barcodes[0]}/history`);
   assert.deepEqual(after.body.map((e: any) => e.event),
     ['inward', 'issue', 'receipt', 'pack', 'dispatch']);
+
+  const allocated = await api('/api/sales-orders');
+  const order = allocated.body.rows.find((row: any) => row.id === salesOrderId);
+  assert.equal(order.status, 'partly_done');
+  assert.equal(Number(order.lines[1].dispatched_qty), 190);
+
+  const blocked = await api(`/api/documents/sales_order/${salesOrderId}/cancel`, {
+    method: 'POST', body: { reason: 'customer changed the specification' }
+  });
+  assert.equal(blocked.status, 400);
+  assert.match(blocked.body.error, /cancel the linked dispatch first/i);
+
+  const cancelledDispatch = await api(`/api/documents/dispatch/${d.body.id}/cancel`, {
+    method: 'POST', body: { reason: 'truck did not leave the mill' }
+  });
+  assert.equal(cancelledDispatch.status, 200, JSON.stringify(cancelledDispatch.body));
+  const reopened = await api('/api/sales-orders');
+  const reopenedOrder = reopened.body.rows.find((row: any) => row.id === salesOrderId);
+  assert.equal(reopenedOrder.status, 'approved');
+  assert.equal(Number(reopenedOrder.lines[1].dispatched_qty), 0);
+
+  const cancelledOrder = await api(`/api/documents/sales_order/${salesOrderId}/cancel`, {
+    method: 'POST', body: { reason: 'customer changed the specification' }
+  });
+  assert.equal(cancelledOrder.status, 200, JSON.stringify(cancelledOrder.body));
 });
 
 // ---------------------------------------------------------------- GSTR-2B --

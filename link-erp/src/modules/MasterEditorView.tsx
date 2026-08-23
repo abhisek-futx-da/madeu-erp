@@ -48,7 +48,6 @@ export const MASTERS: Record<string, MasterSpec> = {
         options: ['regular', 'composition', 'unregistered', 'sez', 'overseas'] },
       { key: 'credit_days', label: 'Credit Days', type: 'number', span: 2 },
       { key: 'credit_limit', label: 'Credit Limit', type: 'number', span: 3 },
-      { key: 'opening_balance', label: 'Opening Balance', type: 'number', span: 4 },
       { key: 'is_msme', label: 'MSME', type: 'checkbox', span: 2 },
       { key: 'auto_tds_tcs', label: 'Auto TDS/TCS', type: 'checkbox', span: 2 },
       { key: 'rcm_applicable', label: 'RCM Applicable', type: 'checkbox', span: 2 },
@@ -57,7 +56,7 @@ export const MASTERS: Record<string, MasterSpec> = {
     blank: {
       code: '', name: '', alias: '', control_account_id: '', gstin: '', pan: '',
       gst_reg_type: 'unregistered', credit_days: 0, credit_limit: 0,
-      opening_balance: 0, is_msme: false, auto_tds_tcs: false,
+      is_msme: false, auto_tds_tcs: false,
       rcm_applicable: false, is_active: true
     }
   },

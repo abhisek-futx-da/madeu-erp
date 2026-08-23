@@ -2,9 +2,14 @@ import type { CookieOptions, NextFunction, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { one, withoutTenant } from './db.ts';
+import { verifyMfaForLogin } from './mfa.ts';
 
 const SECRET = process.env.JWT_SECRET ?? '';
 if (!SECRET) throw new Error('JWT_SECRET must be set');
+const KEY_ID = process.env.JWT_KEY_ID?.trim() || 'current';
+const PREVIOUS_SECRETS = (process.env.JWT_PREVIOUS_SECRETS ?? '')
+  .split(',').map(value => value.trim()).filter(Boolean);
+const VERIFY_SECRETS = [SECRET, ...PREVIOUS_SECRETS.filter(value => value !== SECRET)];
 
 export type Role = 'owner' | 'accounts' | 'purchase' | 'sales' | 'store' | 'viewer';
 
@@ -14,6 +19,8 @@ export interface Session {
   role: Role;
   /** Token id, so a single session can be revoked before it expires. */
   jti?: string;
+  /** Password changes and administrator resets invalidate every old session. */
+  sv?: number;
 }
 
 declare global {
@@ -21,11 +28,14 @@ declare global {
   namespace Express {
     interface Request {
       session?: Session;
+      /** Correlates a browser/API failure with the single structured log line. */
+      requestId?: string;
     }
   }
 }
 
 export const hashPassword = (plain: string) => bcrypt.hash(plain, 12);
+export const verifyPassword = (plain: string, hash: string) => bcrypt.compare(plain, hash);
 
 /**
  * Login throttling and token revocation. Both used to be a Map and a Set in
@@ -145,16 +155,29 @@ export async function pruneAuthState() {
   });
 }
 
-export async function login(email: string, password: string, tenantId?: string) {
+export async function login(
+  email: string, password: string, tenantId?: string, mfaCode?: string,
+  mfaAlreadyVerified = false
+) {
   return withoutTenant(async db => {
-    const user = await one<{ id: string; password_hash: string; is_active: boolean }>(
+    const user = await one<{ id: string; password_hash: string; is_active: boolean; session_version: number }>(
       db,
-      'select id, password_hash, is_active from app_user where email = $1',
+      'select id, password_hash, is_active, session_version from app_user where email = $1',
       [email]
     );
     // Compare regardless, so a missing user and a wrong password take the same time.
-    const ok = await bcrypt.compare(password, user?.password_hash ?? '$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvali');
+    const ok = await verifyPassword(password, user?.password_hash ?? '$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvali');
     if (!user || !user.is_active || !ok) return null;
+
+    const mfa = mfaAlreadyVerified
+      ? { required: false, verified: true }
+      : await verifyMfaForLogin(db, user.id, mfaCode);
+    if (mfa.required && !mfa.verified) {
+      // Asking for the second factor is safe only after the password was
+      // correct. A wrong or replayed code remains indistinguishable from bad
+      // credentials and is counted by the caller's durable throttle.
+      return mfaCode ? null : { mfaRequired: true as const };
+    }
 
     const memberships = await db.query(
       'select tenant_id, role, legal_name from user_memberships($1)',
@@ -169,9 +192,9 @@ export async function login(email: string, password: string, tenantId?: string) 
 
     const jti = crypto.randomUUID();
     const token = jwt.sign(
-      { userId: user.id, tenantId: chosen.tenant_id, role: chosen.role, jti },
+      { userId: user.id, tenantId: chosen.tenant_id, role: chosen.role, jti, sv: user.session_version },
       SECRET,
-      { expiresIn: '12h' }
+      { expiresIn: '12h', keyid: KEY_ID }
     );
     return { token, tenant: chosen.legal_name, role: chosen.role as Role, tenants: memberships.rows };
   });
@@ -191,18 +214,27 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 
   let claims: Session;
-  try {
-    claims = jwt.verify(token, SECRET) as Session;
-  } catch {
+  let verified: Session | null = null;
+  for (const secret of VERIFY_SECRETS) {
+    try {
+      verified = jwt.verify(token, secret) as Session;
+      break;
+    } catch {
+      // During a planned rotation, tokens signed by the immediately previous
+      // key remain valid until their ordinary twelve-hour expiry.
+    }
+  }
+  if (!verified) {
     res.status(401).json({ error: 'invalid or expired token' });
     return;
   }
+  claims = verified;
 
   try {
     const state = await withoutTenant(db =>
-      one<{ is_active: boolean; role: Role | null; revoked: boolean }>(
+      one<{ is_active: boolean; session_version: number; role: Role | null; revoked: boolean }>(
         db,
-        `select u.is_active,
+        `select u.is_active, u.session_version,
                 (select m.role from user_memberships($1) m where m.tenant_id = $2) as role,
                 exists (select 1 from revoked_token where jti = $3::uuid) as revoked
            from app_user u where u.id = $1`,
@@ -220,6 +252,10 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     }
     if (!state.is_active) {
       res.status(401).json({ error: 'this account has been deactivated' });
+      return;
+    }
+    if (state.session_version !== claims.sv) {
+      res.status(401).json({ error: 'this session is no longer valid; please sign in again' });
       return;
     }
     if (!state.role) {

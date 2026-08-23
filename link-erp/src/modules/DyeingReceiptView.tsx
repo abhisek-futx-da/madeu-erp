@@ -150,8 +150,9 @@ export const DyeingReceiptView: React.FC = () => {
         <div className="bg-white rounded border border-[#b8c9dd] p-3 shadow-2xs">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
             <div className="md:col-span-4">
-              <label className="erp-label block text-red-700 font-bold">* Process House</label>
+              <label htmlFor="receipt-process-house" className="erp-label block text-red-700 font-bold">* Process House</label>
               <select
+                id="receipt-process-house"
                 value={processHouseId}
                 onChange={e => setProcessHouseId(e.target.value)}
                 className="erp-input w-full"
@@ -163,23 +164,23 @@ export const DyeingReceiptView: React.FC = () => {
               </select>
             </div>
             <div className="md:col-span-2">
-              <label className="erp-label block text-red-700 font-bold">* Their Challan</label>
-              <input value={challanNo} onChange={e => setChallanNo(e.target.value)}
+              <label htmlFor="receipt-challan" className="erp-label block text-red-700 font-bold">* Their Challan</label>
+              <input id="receipt-challan" value={challanNo} onChange={e => setChallanNo(e.target.value)}
                      className="erp-input w-full font-mono" />
             </div>
             <div className="md:col-span-2">
-              <label className="erp-label block">Challan Date</label>
-              <input type="date" value={challanDate} onChange={e => setChallanDate(e.target.value)}
+              <label htmlFor="receipt-challan-date" className="erp-label block">Challan Date</label>
+              <input id="receipt-challan-date" type="date" value={challanDate} onChange={e => setChallanDate(e.target.value)}
                      className="erp-input w-full" />
             </div>
             <div className="md:col-span-2">
-              <label className="erp-label block">Entry Date</label>
-              <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)}
+              <label htmlFor="receipt-entry-date" className="erp-label block">Entry Date</label>
+              <input id="receipt-entry-date" type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)}
                      className="erp-input w-full" />
             </div>
             <div className="md:col-span-2">
-              <label className="erp-label block">Job Rate ₹/mtr</label>
-              <input type="number" step="0.01" value={defaultRate}
+              <label htmlFor="receipt-job-rate" className="erp-label block">Job Rate ₹/mtr</label>
+              <input id="receipt-job-rate" type="number" step="0.01" value={defaultRate}
                      onChange={e => setDefaultRate(Number(e.target.value))}
                      className="erp-input w-full font-mono" />
             </div>
@@ -233,7 +234,7 @@ export const DyeingReceiptView: React.FC = () => {
                     <td className="px-2 py-1 text-right font-mono">{l.issuedQty.toFixed(2)}</td>
                     <td className="px-2 py-1 text-right">
                       <input
-                        type="number" step="0.01" value={l.receivedQty}
+                        aria-label={`Received metres for ${l.barcode}`} type="number" step="0.01" value={l.receivedQty}
                         onChange={e => update(i, { receivedQty: Number(e.target.value) })}
                         className="erp-input w-24 text-right font-mono"
                       />
@@ -244,7 +245,7 @@ export const DyeingReceiptView: React.FC = () => {
                       {pct.toFixed(2)}%
                     </td>
                     <td className="px-2 py-1">
-                      <select value={l.finishGrade}
+                      <select aria-label={`Finish grade for ${l.barcode}`} value={l.finishGrade}
                               onChange={e => update(i, { finishGrade: e.target.value })}
                               className="erp-input w-24">
                         <option value="A">A</option>
@@ -254,7 +255,7 @@ export const DyeingReceiptView: React.FC = () => {
                       </select>
                     </td>
                     <td className="px-2 py-1 text-right">
-                      <input type="number" step="0.01" value={l.jobRate}
+                      <input aria-label={`Job rate for ${l.barcode}`} type="number" step="0.01" value={l.jobRate}
                              onChange={e => update(i, { jobRate: Number(e.target.value) })}
                              className="erp-input w-20 text-right font-mono" />
                     </td>

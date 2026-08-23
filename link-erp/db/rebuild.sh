@@ -5,6 +5,20 @@ set -euo pipefail
 
 DB="${1:-linkerp}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "${HERE}/../.." && pwd)"
+# shellcheck source=../../scripts/lib-release.sh
+source "${ROOT}/scripts/lib-release.sh"
+
+record_migration() {
+  local file="$1" path="$2" checksum
+  checksum="$(file_md5 "${path}")"
+  psql -q -v ON_ERROR_STOP=1 -d "${DB}" \
+    -v migration_file="${file}" -v migration_checksum="${checksum}" <<'SQL'
+insert into schema_migration (filename, checksum)
+values (:'migration_file', :'migration_checksum')
+on conflict (filename) do nothing;
+SQL
+}
 
 psql -q -c "drop database if exists ${DB};" -c "create database ${DB};" postgres
 psql -q -v ON_ERROR_STOP=1 -d "${DB}" -c "
@@ -13,9 +27,9 @@ psql -q -v ON_ERROR_STOP=1 -d "${DB}" -c "
     applied_at timestamptz not null default now(),
     checksum text
   );"
-for migration in 001_schema 004_gst 006_tenant_address 007_config 008_reports 010_tds_close 012_retained_earnings 014_money 015_hygiene 017_reversals 018_integrity 019_statutory 020_reporting 021_indexes 022_approvals 023_approval_views 025_posted_only 026_regroup 027_lineage_doc_id 028_stock_count 030_count_in_queue 031_cutting_loss 032_returns 033_customer_returns 034_returns_approval 036_write_off 037_exception_integrity 038_gst_note_lifecycle 039_return_maker_checker 040_approval_cancellations; do
+for migration in 001_schema 004_gst 006_tenant_address 007_config 008_reports 010_tds_close 012_retained_earnings 014_money 015_hygiene 017_reversals 018_integrity 019_statutory 020_reporting 021_indexes 022_approvals 023_approval_views 025_posted_only 026_regroup 027_lineage_doc_id 028_stock_count 030_count_in_queue 031_cutting_loss 032_returns 033_customer_returns 034_returns_approval 036_write_off 037_exception_integrity 038_gst_note_lifecycle 039_return_maker_checker 040_approval_cancellations 041_user_access 042_accounting_openings 043_financial_year_guard 044_bank_reconciliation 045_mfa 046_reprocess 047_receipt_reentry 048_fk_indexes 049_brokerage_posting 050_distributed_rate_limit; do
   psql -q -v ON_ERROR_STOP=1 -d "${DB}" -f "${HERE}/${migration}.sql"
-  psql -q -v ON_ERROR_STOP=1 -d "${DB}" -c "insert into schema_migration (filename, checksum) values ('${migration}.sql', md5(pg_read_file('${HERE}/${migration}.sql'))) on conflict (filename) do nothing;"
+  record_migration "${migration}.sql" "${HERE}/${migration}.sql"
   echo "${migration} applied"
 done
 

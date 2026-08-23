@@ -62,6 +62,7 @@ export const REPORTS: Record<string, ReportSpec> = {
     path: '/reports/process-stock',
     columns: [
       { key: 'process_house', label: 'Process House' },
+      { key: 'stage', label: 'Stage' },
       { key: 'quality', label: 'Quality' },
       { key: 'pcs', label: 'Pcs', align: 'right' },
       { key: 'qty', label: 'Qty (Mtr)', align: 'right', format: num }

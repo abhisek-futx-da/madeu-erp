@@ -1,14 +1,27 @@
 import express from 'express';
 import cors from 'cors';
+import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import { buildRoutes } from './routes.ts';
 import { pool } from './db.ts';
 import { pruneAuthState } from './auth.ts';
+import { consumeRateLimit, pruneRateLimits } from './rate-limit.ts';
 
 const app = express();
 
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+
+// Accept a caller's correlation id only when it is a short, log-safe token.
+// Every response—including failures—then carries one id support can search.
+app.use((req, res, next) => {
+  const supplied = req.get('x-request-id');
+  req.requestId = supplied && /^[A-Za-z0-9._:-]{1,100}$/.test(supplied)
+    ? supplied
+    : randomUUID();
+  res.setHeader('x-request-id', req.requestId);
+  next();
+});
 
 /**
  * `origin: true` reflects whatever Origin the caller sends, which with
@@ -29,6 +42,17 @@ app.use(cors({
   },
   credentials: true
 }));
+
+// SameSite cookies and the CORS allow-list are the primary browser boundary.
+// Fetch Metadata closes the remaining simple-form CSRF path before a request
+// body is parsed. Non-browser integrations omit this header and keep working.
+app.use((req, res, next) => {
+  const changesState = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+  if (changesState && req.get('sec-fetch-site') === 'cross-site') {
+    return res.status(403).json({ error: 'cross-site write refused', requestId: req.requestId });
+  }
+  next();
+});
 
 app.use(express.json({ limit: '2mb' }));
 
@@ -51,11 +75,30 @@ app.use((_req, res, next) => {
  */
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = Number(process.env.RATE_LIMIT_PER_MINUTE ?? 600);
+const RATE_MODE = process.env.RATE_LIMIT_MODE ?? 'memory';
+if (!Number.isSafeInteger(RATE_MAX) || RATE_MAX < 1) throw new Error('RATE_LIMIT_PER_MINUTE must be a positive integer');
+if (!['memory', 'database'].includes(RATE_MODE)) throw new Error('RATE_LIMIT_MODE must be memory or database');
 const hits = new Map<string, { n: number; until: number }>();
 
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
+  // Monitoring must still be able to report an overloaded API as alive.
+  if (req.path === '/health') return next();
   const now = Date.now();
   const key = req.ip ?? 'unknown';
+
+  if (RATE_MODE === 'database') {
+    try {
+      const retryAfter = await consumeRateLimit(`api:${key}`, RATE_MAX, RATE_WINDOW_MS);
+      if (retryAfter !== null) {
+        res.setHeader('retry-after', String(retryAfter));
+        return res.status(429).json({ error: 'too many requests' });
+      }
+      return next();
+    } catch (err) {
+      return next(err);
+    }
+  }
+
   const rec = hits.get(key);
   if (!rec || rec.until < now) {
     hits.set(key, { n: 1, until: now + RATE_WINDOW_MS });
@@ -80,6 +123,7 @@ app.use((req, res, next) => {
     console.log(JSON.stringify({
       t: new Date().toISOString(), method: req.method, path: req.path,
       status: res.statusCode, ms: Math.round(ms),
+      requestId: req.requestId,
       user: req.session?.userId ?? null, tenant: req.session?.tenantId ?? null
     }));
   });
@@ -105,7 +149,7 @@ app.use((req, res) => {
   res.status(404).json({ error: `no such endpoint: ${req.method} ${req.path}` });
 });
 
-app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof ZodError) {
     res.status(400).json({ error: 'validation failed', issues: err.issues });
     return;
@@ -117,6 +161,10 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
     '23505': [409, `already exists (${e.constraint ?? 'unique constraint'})`],
     '23503': [400, `refers to something that does not exist (${e.constraint ?? 'foreign key'})`],
     '23514': [400, `violates a business rule (${e.constraint ?? 'check constraint'})`],
+    // PL/pgSQL domain guards deliberately use RAISE EXCEPTION (P0001).
+    // They are rejected commands, not infrastructure failures; preserve the
+    // precise rule text so an operator can correct the transaction.
+    'P0001': [400, e.message ?? 'violates a business rule'],
     '42501': [403, 'not permitted for this tenant'],
     '40P01': [409, 'that record was being changed by someone else; please try again'],
     '40001': [409, 'a concurrent change interfered; please try again'],
@@ -133,14 +181,18 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
    * ours (500). Lumping both into 400 meant no monitor could tell a rejected
    * invoice from a broken server.
    */
-  const ours = !(err instanceof Error) || !e.message;
+  const programmingError = err instanceof TypeError || err instanceof ReferenceError ||
+    err instanceof RangeError || err instanceof SyntaxError;
+  const unmappedDatabaseError = Boolean(e.code && !mapped);
+  const ours = !(err instanceof Error) || !e.message || programmingError || unmappedDatabaseError;
   console.error(JSON.stringify({
     t: new Date().toISOString(), level: ours ? 'error' : 'warn',
+    requestId: req.requestId,
     message: e.message ?? String(err),
     stack: ours && err instanceof Error ? err.stack : undefined
   }));
   if (ours) {
-    res.status(500).json({ error: 'internal error' });
+    res.status(500).json({ error: 'internal error', requestId: req.requestId });
     return;
   }
   res.status(400).json({ error: e.message });
@@ -159,6 +211,7 @@ const server = app.listen(port, () => console.log(`link-erp api listening on :${
 
 const prune = setInterval(() => {
   pruneAuthState().catch(() => {});
+  if (RATE_MODE === 'database') pruneRateLimits().catch(() => {});
 }, 15 * 60_000);
 prune.unref();
 

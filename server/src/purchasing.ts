@@ -3,6 +3,7 @@ import { computeInvoice, type TaxableLine } from './gst.ts';
 import type { Ctx } from './domain.ts';
 import { round2, sumBy } from './money.ts';
 import { approvalFor, holdVoucher, recordEvent } from './approvals.ts';
+import { settings, stringSetting } from './config.ts';
 
 /**
  * Inward tax. Without this the mill can see what it owes but not what it can
@@ -89,15 +90,19 @@ export async function recordPurchaseInvoice(
   }));
 
   const isRcm = supplier.rcm_applicable || supplier.gst_reg_type === 'unregistered';
+  const companySettings = await settings(ctx.db);
+  const rounding = stringSetting(
+    companySettings, 'invoice.rounding', ['nearest_rupee', 'none'] as const, 'nearest_rupee'
+  );
   const computed = computeInvoice(
     supplier.state_code ?? placeOfSupply, placeOfSupply,
-    { gstRegType: supplier.gst_reg_type }, taxable, { isRcm }
+    { gstRegType: supplier.gst_reg_type }, taxable, { isRcm, rounding }
   );
 
   // Under reverse charge the supplier bills without tax; we self-assess it.
   const selfAssessed = isRcm
     ? computeInvoice(supplier.state_code ?? placeOfSupply, placeOfSupply,
-        { gstRegType: 'regular' }, taxable)
+        { gstRegType: 'regular' }, taxable, { rounding })
     : null;
 
   const ourRef = await nextDocNumber(ctx.db, ctx.tenantId, 'purchase_invoice', ctx.fy);

@@ -12,6 +12,7 @@
  */
 
 export type SupplyType = 'intra_state' | 'inter_state' | 'export' | 'sez';
+export type InvoiceRounding = 'nearest_rupee' | 'none';
 
 export interface TaxableLine {
   sno: number;
@@ -69,7 +70,7 @@ export function computeInvoice(
   placeOfSupply: string,
   recipient: { gstRegType: string },
   lines: TaxableLine[],
-  opts: { isRcm?: boolean } = {}
+  opts: { isRcm?: boolean; rounding?: InvoiceRounding } = {}
 ): ComputedInvoice {
   if (lines.length === 0) throw new Error('an invoice needs at least one line');
 
@@ -115,8 +116,11 @@ export function computeInvoice(
   });
 
   const beforeRounding = taxablePaise + cgstPaise + sgstPaise + igstPaise;
-  // Invoice totals are presented to the nearest rupee; the difference is booked.
-  const rounded = Math.round(beforeRounding / 100) * 100;
+  // Rounding is a company policy. The selected answer is stored on the
+  // document through its totals, so later policy changes cannot rewrite it.
+  const rounded = opts.rounding === 'none'
+    ? beforeRounding
+    : Math.round(beforeRounding / 100) * 100;
   const roundOffPaise = rounded - beforeRounding;
 
   return {

@@ -105,10 +105,10 @@ export interface MovementRow {
 }
 
 export const auth = {
-  login: (email: string, password: string) =>
-    request<{ token: string; tenant: string; role: string }>('/auth/login', {
+  login: (email: string, password: string, mfaCode?: string) =>
+    request<{ token: string; tenant: string; role: string } | { mfaRequired: true }>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password, ...(mfaCode ? { mfaCode } : {}) })
     }),
   me: () => api.get<Session>('/me'),
   logout: () => api.post<{ signedOut: boolean }>('/auth/logout', {})
@@ -121,6 +121,8 @@ export const STATUS_LABEL: Record<string, string> = {
   cut_packed: 'Cut / Packed',
   dispatched: 'Dispatched',
   returned_to_weaver: 'Returned To Weaver',
+  returned_to_process_house: 'Returned To Process House',
+  reprocess_at_process_house: 'At Process House for Reprocess',
   written_off: 'Written Off',
   consumed: 'Cut Up / Joined'
 };

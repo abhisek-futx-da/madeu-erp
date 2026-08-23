@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { useApi } from '../lib/useApi';
 import { api } from '../lib/api';
-import type { LedgerRow, PieceRow } from '../lib/api';
+import type { LedgerRow, Page, PieceRow } from '../lib/api';
 import { QrCode, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react';
 import { enqueue, isOnline } from '../lib/offlineQueue';
 
@@ -92,7 +92,16 @@ const SPECS: Record<Kind, Spec> = {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-interface Line { barcode: string; quality: string; qty: number; rate: number }
+interface Line {
+  barcode: string; quality: string; grade: string; qty: number; rate: number;
+  soLineId?: string;
+}
+
+interface SalesOrderRow {
+  id: string; order_no: string; party_id: string; status: string;
+  lines: { id: string; sno: number; quality: string; grade_code: string;
+    qty: number; dispatched_qty: number; rate: number }[];
+}
 
 export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
   const spec = SPECS[kind];
@@ -111,6 +120,7 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
   const eligible = useApi<PieceRow[]>(
     `/pieces?status=${spec.eligibleStatuses.join(',')}&limit=100000`
   );
+  const salesOrders = useApi<Page<SalesOrderRow>>('/sales-orders?limit=100000');
 
   const allowedControlIds = new Set(
     (controls.data ?? []).filter(c => spec.counterpartyNatures.includes(c.nature)).map(c => c.id)
@@ -118,6 +128,11 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
   const parties = (ledgers.data ?? []).filter(l => allowedControlIds.has(l.control_account_id));
   const invoices = useApi<{ rows: { id: string; invoice_no: string; party_id: string; status: string }[] }>('/sales-invoices?limit=100000');
   const partyInvoices = (invoices.data?.rows ?? []).filter(i => i.party_id === partyId && i.status === 'approved');
+  const openOrderLines = (salesOrders.data?.rows ?? [])
+    .filter(order => order.party_id === partyId && ['approved', 'partly_done'].includes(order.status))
+    .flatMap(order => order.lines
+      .filter(line => Number(line.dispatched_qty) < Number(line.qty))
+      .map(line => ({ ...line, orderNo: order.order_no })));
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,8 +152,15 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
       return;
     }
     setNotice(null);
+    const match = kind === 'dispatch'
+      ? openOrderLines.find(line => line.quality === piece.quality &&
+          line.grade_code === piece.grade_code &&
+          Number(line.qty) - Number(line.dispatched_qty) >= Number(piece.current_qty))
+      : undefined;
     setLines(prev => [...prev, {
-      barcode: piece.barcode, quality: piece.quality, qty: piece.current_qty, rate
+      barcode: piece.barcode, quality: piece.quality, grade: piece.grade_code,
+      qty: piece.current_qty, rate: match ? Number(match.rate) : rate,
+      soLineId: match?.id
     }]);
   };
 
@@ -185,7 +207,7 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
         ? { barcodes: lines.map(l => l.barcode), note: challanNo }
         : {
             partyId, challanNo, challanDate,
-            lines: lines.map(l => ({ barcode: l.barcode, rate: l.rate }))
+            lines: lines.map(l => ({ barcode: l.barcode, rate: l.rate, soLineId: l.soLineId || null }))
           };
 
     // A dropped signal must not lose the scan; queue it and flush on reconnect.
@@ -255,8 +277,11 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
         <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-1 md:grid-cols-12 gap-2.5">
           {spec.partyLabel && (
             <div className="md:col-span-5">
-              <label className="erp-label block text-red-700 font-bold">* {spec.partyLabel}</label>
-              <select value={partyId} onChange={e => setPartyId(e.target.value)} className="erp-input w-full">
+              <label htmlFor="scan-party" className="erp-label block text-red-700 font-bold">* {spec.partyLabel}</label>
+              <select id="scan-party" value={partyId} onChange={e => {
+                setPartyId(e.target.value);
+                if (kind === 'dispatch') setLines(old => old.map(line => ({ ...line, soLineId: undefined })));
+              }} className="erp-input w-full">
                 <option value="">— select —</option>
                 {parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
@@ -264,10 +289,10 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
           )}
           {kind !== 'write_off' && (
             <div className={spec.partyLabel ? 'md:col-span-3' : 'md:col-span-8'}>
-            <label className={`erp-label block ${spec.partyLabel ? 'text-red-700 font-bold' : ''}`}>
+            <label htmlFor="scan-challan" className={`erp-label block ${spec.partyLabel ? 'text-red-700 font-bold' : ''}`}>
               {spec.partyLabel ? '* Challan No.' : 'Packing note'}
             </label>
-            <input value={challanNo} onChange={e => setChallanNo(e.target.value)}
+            <input id="scan-challan" value={challanNo} onChange={e => setChallanNo(e.target.value)}
                    className="erp-input w-full font-mono"
                    placeholder={spec.partyLabel ? '' : 'e.g. folded, 4 bales'} />
             </div>
@@ -275,8 +300,8 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
 
           {spec.needsInvoice && (
             <div className="md:col-span-2">
-              <label className="erp-label block text-red-700 font-bold">* Against Invoice</label>
-              <select value={invoiceId} onChange={e => setInvoiceId(e.target.value)} className="erp-input w-full">
+              <label htmlFor="scan-invoice" className="erp-label block text-red-700 font-bold">* Against Invoice</label>
+              <select id="scan-invoice" value={invoiceId} onChange={e => setInvoiceId(e.target.value)} className="erp-input w-full">
                 <option value="">— select —</option>
                 {partyInvoices.map(i => <option key={i.id} value={i.id}>{i.invoice_no}</option>)}
               </select>
@@ -285,24 +310,24 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
 
           {spec.needsReason && (
             <div className={kind === 'write_off' ? 'md:col-span-8' : 'md:col-span-5'}>
-              <label className="erp-label block text-red-700 font-bold">* Reason</label>
-              <input value={reason} onChange={e => setReason(e.target.value)} maxLength={200}
+              <label htmlFor="scan-reason" className="erp-label block text-red-700 font-bold">* Reason</label>
+              <input id="scan-reason" value={reason} onChange={e => setReason(e.target.value)} maxLength={200}
                      className="erp-input w-full" placeholder="e.g. defect, damage, wrong colour" />
             </div>
           )}
 
           <div className="md:col-span-2">
-            <label className="erp-label block">Date</label>
-            <input type="date" value={challanDate} onChange={e => setChallanDate(e.target.value)}
+            <label htmlFor="scan-date" className="erp-label block">Date</label>
+            <input id="scan-date" type="date" value={challanDate} onChange={e => setChallanDate(e.target.value)}
                    className="erp-input w-full" />
           </div>
 
           {spec.needsRate && (
             <div className="md:col-span-2">
-              <label className="erp-label block">
+              <label htmlFor="scan-rate" className="erp-label block">
                 {kind === 'issue' ? 'Job Rate ₹' : 'Sale Rate ₹'}
               </label>
-              <input type="number" step="0.01" value={rate}
+              <input id="scan-rate" type="number" step="0.01" value={rate}
                      onChange={e => setRate(Number(e.target.value))}
                      className="erp-input w-full font-mono" />
             </div>
@@ -331,12 +356,13 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
                   <th className="px-2 py-1.5 font-bold text-right">Rate</th>
                   <th className="px-2 py-1.5 font-bold text-right">Amount</th>
                 </>}
+                {kind === 'dispatch' && <th className="px-2 py-1.5 font-bold">Sales order allocation</th>}
                 <th className="px-2 py-1.5"></th>
               </tr>
             </thead>
             <tbody>
               {lines.length === 0 && (
-                <tr><td colSpan={spec.needsRate ? 7 : 5} className="px-2 py-6 text-center text-slate-400">
+                <tr><td colSpan={(spec.needsRate ? 7 : 5) + (kind === 'dispatch' ? 1 : 0)} className="px-2 py-6 text-center text-slate-400">
                   Scan a barcode to begin
                 </td></tr>
               )}
@@ -350,6 +376,23 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
                     <td className="px-2 py-1 text-right font-mono">{l.rate.toFixed(2)}</td>
                     <td className="px-2 py-1 text-right font-mono">₹{(l.qty * l.rate).toFixed(2)}</td>
                   </>}
+                  {kind === 'dispatch' && <td className="px-2 py-1">
+                    <select aria-label={`Sales order for ${l.barcode}`} value={l.soLineId ?? ''}
+                      onChange={e => {
+                        const chosen = openOrderLines.find(line => line.id === e.target.value);
+                        setLines(old => old.map((line, index) => index === i
+                          ? { ...line, soLineId: e.target.value || undefined,
+                              rate: chosen ? Number(chosen.rate) : line.rate }
+                          : line));
+                      }} className="erp-input min-w-56">
+                      <option value="">Ad-hoc / no sales order</option>
+                      {openOrderLines
+                        .filter(line => line.quality === l.quality && line.grade_code === l.grade)
+                        .map(line => <option key={line.id} value={line.id}>
+                          {line.orderNo} · line {line.sno} · {(Number(line.qty) - Number(line.dispatched_qty)).toFixed(2)} m left
+                        </option>)}
+                    </select>
+                  </td>}
                   <td className="px-2 py-1 text-right">
                     <button onClick={() => setLines(prev => prev.filter((_, j) => j !== i))}
                             title="Remove line" className="text-red-600 hover:text-red-800">

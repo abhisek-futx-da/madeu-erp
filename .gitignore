@@ -2,11 +2,15 @@ node_modules/
 dist/
 .env
 .env.local
+.bootstrap-tenant.env
+bootstrap-tenant.env
 *.log
 .DS_Store
 backups/*.dump
 backups/*.sql.gz
 coverage/
+link-erp/test-results/
+link-erp/playwright-report/
 
 # Local screenshots and one-off repair helpers are not deployable ERP source.
 Screenshot *.png
@@ -15,3 +19,4 @@ fix*.js
 patch_*.js
 get_pieces.js
 test-flow.js
+_local_archive/

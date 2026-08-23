@@ -5,7 +5,8 @@ import {
   type EinvoiceInput, type EinvoiceParty
 } from './einvoice.ts';
 import type { Ctx } from './domain.ts';
-import { approvalFor, holdVoucher, recordEvent } from './approvals.ts';
+import { approvalFor, holdVoucher, recordEvent, type Posting } from './approvals.ts';
+import { brokerageAmount, brokerageFor, settings, stringSetting } from './config.ts';
 
 /** The IRP is unreliable with non-ASCII text, so descriptions are folded first. */
 const asciiOnly = (s: string) =>
@@ -30,13 +31,15 @@ async function roles(ctx: Ctx) {
     cgstOutput: need('cgst_output'),
     sgstOutput: need('sgst_output'),
     igstOutput: need('igst_output'),
-    roundOff: need('round_off')
+    roundOff: need('round_off'),
+    brokerageExpense: map.get('brokerage_expense') ?? null
   };
 }
 
 interface DispatchRow {
   dispatch_id: string; party_id: string; challan_date: string;
   transport_id: string | null; lr_no: string | null; vehicle_no: string | null;
+  default_broker_id: string | null;
 }
 
 /**
@@ -67,11 +70,27 @@ export async function raiseInvoiceForDispatch(
   const head = await one<DispatchRow>(
     ctx.db,
     `select d.id as dispatch_id, d.party_id, d.challan_date::text, d.transport_id,
-            d.lr_no, d.vehicle_no
-       from dispatch d where d.id = $1`,
+            d.lr_no, d.vehicle_no, party.broker_id as default_broker_id
+       from dispatch d
+       join ledger_account party on party.id = d.party_id
+      where d.id = $1`,
     [dispatchId]
   );
   if (!head) throw new Error('dispatch not found');
+
+  // A linked order's broker is the contractual source. A direct dispatch falls
+  // back to the customer's default broker. Mixing brokers on one invoice is
+  // refused because one accrual cannot honestly be split by guesswork.
+  const orderBrokers = await many<{ broker_id: string }>(ctx.db,
+    `select distinct so.broker_id
+       from dispatch_line dl
+       join finish_sales_order_line sol on sol.id = dl.so_line_id
+       join finish_sales_order so on so.id = sol.order_id
+      where dl.dispatch_id = $1 and so.broker_id is not null`, [dispatchId]);
+  if (orderBrokers.length > 1) {
+    throw new Error('one dispatch contains sales orders with different brokers; split the dispatch before invoicing');
+  }
+  const brokerId = orderBrokers[0]?.broker_id ?? head.default_broker_id;
 
   const lines = await many<{
     piece_id: string; quality_id: string; hsn_code: string; quality_name: string;
@@ -107,9 +126,23 @@ export async function raiseInvoiceForDispatch(
     gstRate: Number(l.gst_rate)
   }));
 
-  const computed = computeInvoice(
-    seller.stateCode, placeOfSupply, { gstRegType: buyer.gstRegType }, taxable
+  const companySettings = await settings(ctx.db);
+  const rounding = stringSetting(
+    companySettings, 'invoice.rounding', ['nearest_rupee', 'none'] as const, 'nearest_rupee'
   );
+  const computed = computeInvoice(
+    seller.stateCode, placeOfSupply, { gstRegType: buyer.gstRegType }, taxable, { rounding }
+  );
+  const brokerageRule = await brokerageFor(
+    ctx.db, brokerId, head.party_id, 'sales_invoice'
+  );
+  const brokerage = brokerageRule
+    ? brokerageAmount(
+        brokerageRule,
+        computed.taxableValue,
+        computed.lines.reduce((total, line) => total + Number(line.qty), 0)
+      )
+    : 0;
 
   const invoiceNo = await nextDocNumber(ctx.db, ctx.tenantId, 'sales_invoice', ctx.fy);
   const invoiceDate = opts.invoiceDate ?? head.challan_date;
@@ -123,11 +156,13 @@ export async function raiseInvoiceForDispatch(
     ctx.db,
     `insert into sales_invoice (tenant_id, invoice_no, invoice_date, party_id, dispatch_id,
        place_of_supply, supply_type, taxable_value, cgst_amount, sgst_amount, igst_amount,
-       round_off, invoice_total, status, created_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$15,$14) returning id`,
+       round_off, invoice_total, broker_id, brokerage_rule_id, brokerage_amount, status, created_by)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$18,$17) returning id`,
     [ctx.tenantId, invoiceNo, invoiceDate, head.party_id, dispatchId, placeOfSupply,
      computed.supplyType, computed.taxableValue, computed.cgstAmount, computed.sgstAmount,
-     computed.igstAmount, computed.roundOff, computed.invoiceTotal, ctx.userId,
+     computed.igstAmount, computed.roundOff, computed.invoiceTotal,
+     brokerage > 0 ? brokerId : null, brokerage > 0 ? brokerageRule?.id : null, brokerage,
+     ctx.userId,
      approval ? 'pending_approval' : 'approved']
   );
   if (!inv) throw new Error('invoice insert returned nothing');
@@ -170,15 +205,25 @@ export async function raiseInvoiceForDispatch(
 
   const led = await roles(ctx);
   const ledgers = { ...led, party: head.party_id };
+  const postings: Posting[] = invoicePostingLines(computed, ledgers);
+  if (brokerage > 0) {
+    if (!brokerId || !led.brokerageExpense) {
+      throw new Error('brokerage is due but its broker or expense posting role is not configured');
+    }
+    postings.push(
+      { ledgerId: led.brokerageExpense, debit: brokerage },
+      { ledgerId: brokerId, credit: brokerage }
+    );
+  }
 
   if (approval) {
     await holdVoucher(
       ctx, 'sales_invoice', inv.id, 'sales', invoiceDate, `Tax invoice ${invoiceNo}`,
-      invoicePostingLines(computed, ledgers)
+      postings
     );
     await recordEvent(ctx, 'sales_invoice', inv.id, 'submitted', computed.invoiceTotal);
   } else {
-    const voucherId = await postInvoiceVoucher(ctx, invoiceNo, invoiceDate, inv.id, computed, ledgers);
+    const voucherId = await postInvoiceVoucher(ctx, invoiceNo, invoiceDate, inv.id, postings);
     await ctx.db.query('update sales_invoice set voucher_id = $1 where id = $2', [voucherId, inv.id]);
   }
 
@@ -211,6 +256,8 @@ export async function raiseInvoiceForDispatch(
     igst: computed.igstAmount,
     roundOff: computed.roundOff,
     invoiceTotal: computed.invoiceTotal,
+    brokerage,
+    brokerId: brokerage > 0 ? brokerId : null,
     einvoiceReady: issues.length === 0,
     einvoiceIssues: issues,
     status: approval ? 'pending_approval' : 'approved',
@@ -278,11 +325,8 @@ function einvoiceInputFor(
 
 async function postInvoiceVoucher(
   ctx: Ctx, invoiceNo: string, invoiceDate: string, invoiceId: string,
-  computed: ReturnType<typeof computeInvoice>,
-  ledgers: { party: string; sales: string; roundOff: string;
-             cgstOutput: string; sgstOutput: string; igstOutput: string }
+  postings: Posting[]
 ) {
-  const postings = invoicePostingLines(computed, ledgers);
   const drift = postings.reduce((n, p) => n + (p.debit ?? 0) - (p.credit ?? 0), 0);
   if (Math.abs(drift) > 0.005) {
     throw new Error(`invoice ${invoiceNo} would post out of balance by ${drift.toFixed(2)}`);

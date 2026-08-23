@@ -31,33 +31,13 @@ step "server: install"        bash -c "cd '${ROOT}/server' && npm ci --silent"
 step "server: typecheck"      bash -c "cd '${ROOT}/server' && npm run typecheck"
 step "server: tests on a database built from scratch" \
                               bash -c "cd '${ROOT}/server' && ./test/run.sh"
+step "server: production dependency audit" \
+                              bash -c "cd '${ROOT}/server' && npm audit --omit=dev --audit-level=high"
+step "upgrade from the previous deployed schema" \
+                              bash -c "cd '${ROOT}' && ./scripts/verify-upgrade.sh"
 
-step "every migration is recorded" bash -c '
-  n=$(psql -d linkerp_test -tAc "select count(*) from schema_migration" | tr -d " ")
-  files=$(find "$1/link-erp/db" -maxdepth 1 -name "0*.sql" \
-            | grep -vE "00[23]_|seed" | wc -l | tr -d " ")
-  echo "recorded=$n files=$files"
-  [ "$n" = "$files" ]' _ "${ROOT}"
-
-step "no navigable foreign key left unindexed" bash -c '
-  missing=$(psql -d linkerp_test -tAc "
-    select coalesce(string_agg(fk, \", \"), \"\")
-      from (
-        select c.conrelid::regclass::text || \".\" || a.attname as fk
-          from pg_constraint c
-          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
-         where c.contype = \"f\" and c.connamespace = \"public\"::regnamespace
-           and a.attname not in (\"created_by\",\"closed_by\",\"filed_by\",\"reopened_by\",\"approved_by\")
-           and not exists (
-             select 1 from pg_index i
-              where i.indrelid = c.conrelid
-                and (i.indkey[0] = c.conkey[1]
-                     or (i.indkey[1] = c.conkey[1]
-                         and i.indkey[0] = (select attnum from pg_attribute
-                                             where attrelid = c.conrelid and attname = \"tenant_id\"))))
-      ) m" | tr -d " ")
-  echo "unindexed: ${missing:-none}"
-  [ -z "$missing" ]'
+step "migration ledger and foreign-key indexes" \
+                              bash -c "cd '${ROOT}' && ./scripts/check-db-hygiene.sh linkerp_test"
 
 step "backup restores into a separate database" \
                               bash -c "cd '${ROOT}' && POSTGRES_DB=linkerp_test ./scripts/verify-backup-restore.sh"
@@ -68,6 +48,10 @@ step "web: install"    bash -c "cd '${ROOT}/link-erp' && npm ci --silent"
 step "web: typecheck"  bash -c "cd '${ROOT}/link-erp' && npm run typecheck"
 step "web: tests"      bash -c "cd '${ROOT}/link-erp' && npm test"
 step "web: build"      bash -c "cd '${ROOT}/link-erp' && npm run build"
+step "web: production dependency audit" \
+                        bash -c "cd '${ROOT}/link-erp' && npm audit --omit=dev --audit-level=high"
+step "browser: desktop, mobile, accessibility, every module" \
+                        bash -c "cd '${ROOT}' && ./scripts/test-browser-local.sh"
 
 # ------------------------------------------------------------ containers --
 

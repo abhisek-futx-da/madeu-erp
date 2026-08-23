@@ -88,18 +88,18 @@ export const GstNoteView: React.FC = () => {
       )}
 
       <div className="flex-1 overflow-auto p-3 space-y-3">
-        <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-12 gap-2.5">
-          <div className="col-span-2">
-            <label className="erp-label block text-red-700 font-bold">* Note Type</label>
-            <select value={kind} onChange={e => setKind(e.target.value as 'credit' | 'debit')}
+        <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-1 md:grid-cols-12 gap-2.5">
+          <div className="md:col-span-2">
+            <label htmlFor="gst-note-type" className="erp-label block text-red-700 font-bold">* Note Type</label>
+            <select id="gst-note-type" value={kind} onChange={e => setKind(e.target.value as 'credit' | 'debit')}
                     className="erp-input w-full">
               <option value="credit">Credit note (reduces the sale)</option>
               <option value="debit">Debit note (adds to the sale)</option>
             </select>
           </div>
-          <div className="col-span-4">
-            <label className="erp-label block text-red-700 font-bold">* Against Invoice</label>
-            <select value={againstInvoiceId} onChange={e => setAgainstInvoiceId(e.target.value)}
+          <div className="md:col-span-4">
+            <label htmlFor="gst-note-invoice" className="erp-label block text-red-700 font-bold">* Against Invoice</label>
+            <select id="gst-note-invoice" value={againstInvoiceId} onChange={e => setAgainstInvoiceId(e.target.value)}
                     className="erp-input w-full">
               <option value="">— select —</option>
               {(invoices.data?.rows ?? []).map(i => (
@@ -109,14 +109,14 @@ export const GstNoteView: React.FC = () => {
               ))}
             </select>
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block">Note Date</label>
-            <input type="date" value={noteDate} onChange={e => setNoteDate(e.target.value)}
+          <div className="md:col-span-2">
+            <label htmlFor="gst-note-date" className="erp-label block">Note Date</label>
+            <input id="gst-note-date" type="date" value={noteDate} onChange={e => setNoteDate(e.target.value)}
                    className="erp-input w-full" />
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block text-red-700 font-bold">* Taxable Value</label>
-            <input type="number" step="0.01" value={taxableValue}
+          <div className="md:col-span-2">
+            <label htmlFor="gst-note-value" className="erp-label block text-red-700 font-bold">* Taxable Value</label>
+            <input id="gst-note-value" type="number" step="0.01" value={taxableValue}
                    onChange={e => setTaxableValue(Number(e.target.value))}
                    className="erp-input w-full text-right font-mono" />
             {selected && (
@@ -125,9 +125,9 @@ export const GstNoteView: React.FC = () => {
               </p>
             )}
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block text-red-700 font-bold">* Reason</label>
-            <input value={reason} onChange={e => setReason(e.target.value)}
+          <div className="md:col-span-2">
+            <label htmlFor="gst-note-reason" className="erp-label block text-red-700 font-bold">* Reason</label>
+            <input id="gst-note-reason" value={reason} onChange={e => setReason(e.target.value)}
                    className="erp-input w-full" placeholder="shade variation" />
           </div>
         </div>

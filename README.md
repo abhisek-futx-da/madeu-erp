@@ -6,11 +6,11 @@ as finish, is cut, packed and dispatched, and is billed under GST. Every step
 posts double-entry vouchers, and every piece keeps a movement log nothing can
 edit.
 
-Modelled on the legacy Windows system a Bhiwandi mill runs today (the
-screenshots in this folder), rebuilt as Postgres + a TypeScript API + a React
-front end.
+Modelled on the legacy Windows system a Bhiwandi mill runs today. Local design
+references and one-off repair artifacts are kept under `_local_archive/` and
+are deliberately excluded from the release source.
 
-- **Database** — Postgres 16, row-level security per tenant, 19 tracked
+- **Database** — Postgres 16, row-level security per tenant, 40 tracked
   migrations
 - **API** — Node 26 running TypeScript directly, Express 5, zod at every edge
 - **Web** — React 19, Vite, Tailwind, strict TypeScript
@@ -19,17 +19,35 @@ front end.
 
 ## Running it
 
-### With Docker (the way to run it for real)
+### With Docker (local evaluation or an internal pilot)
 
 ```bash
 cp .env.example .env      # then change every secret in it
+docker compose up -d db
+./scripts/migrate.sh      # schema only
 docker compose up -d --build
-./scripts/migrate.sh      # schema; add the demo data with db/003_seed.sql etc.
 ```
 
 The app is on <http://localhost:8080>. The database is not published outside
 the compose network, and the API is reached through nginx on the same origin,
 so the browser never needs a CORS exemption.
+
+This command is intentionally **not** a public-internet deployment. Before a
+controlled pilot is exposed outside the mill network, put HTTPS in front of the
+web container, use the protected production environment file, and run:
+
+```bash
+ENV_FILE=.env.production ./scripts/preflight.sh
+```
+
+See `docs/PRODUCTION_DEPLOYMENT.md`. A green preflight checks configuration;
+it does not replace CA review, an IRP sandbox test, or a mill pilot.
+
+For a real mill, never run the demo seed scripts. After migrations, use the
+profile-gated empty-company bootstrap in `docs/PRODUCTION_DEPLOYMENT.md`.
+It creates the named company, owner, system accounts, open financial year,
+document series, and the stock-count second signature; it creates no dummy
+party, stock, bank, HSN/SAC, rate, or accounting transaction.
 
 ### Locally, for development
 
@@ -58,17 +76,21 @@ your own: `npm --prefix server run dev:test-db` (:4010) and
 ./scripts/restore.sh backups/x.dump     # into a scratch database, checked
 ```
 
-`backup.sh` refuses to keep an archive `pg_restore --list` cannot read.
+`backup.sh` refuses to keep an archive `pg_restore --list` cannot read. If the
+host tools are older than the database, the scripts automatically use the
+matching official PostgreSQL client image rather than creating an unreadable
+or incompatible archive.
 `restore.sh` will not overwrite the live database without `CONFIRM=yes`, and
-after restoring it checks that the books still balance.
+after restoring it checks the migration history, tenant presence, every posted
+voucher's balance, and the piece cache against its append-only movement log.
 
 ---
 
 ## Tests
 
 ```bash
-cd server   && PGHOST=... PGPORT=... PGUSER=postgres npm test   # 203 tests
-cd link-erp && npm test                                         # 52 tests
+cd server   && PGHOST=... PGPORT=... PGUSER=postgres npm test   # 292 tests
+cd link-erp && npm test                                         # 81 tests
 
 # every step the CI workflow runs, here, against a real Postgres
 PGHOST=... PGPORT=... PGUSER=postgres ./scripts/ci-local.sh
@@ -78,7 +100,7 @@ cd link-erp/db && PGHOST=... PGPORT=... PGUSER=postgres ./load/run.sh
 ```
 
 `server/test/run.sh` **builds the database from scratch on every run**, applies
-the twelve in-database invariants, starts the API on its own port, and then runs
+the fourteen in-database invariants, starts the API on its own port, and then runs
 the suite. This matters: the suite used to run against one shared, accumulating
 database, and creating four documents by hand was enough to fail twenty of a
 hundred and thirty-one tests. A run is now repeatable or it is not a run.
@@ -97,8 +119,13 @@ What the suites cover:
 | `statutory` | delivery challan, e-way bill payload, ITC-04, the filing lock |
 | `approvals` | maker–checker: held postings, role, maker ≠ checker |
 | `regroup` | cutting a thaan and joining short ends: metres and rupees conserved |
+| `reprocess` | rejected finish, re-issue, corrected receipt, shrinkage and incremental job-work |
+| `purchase-order` | supplier PO printing, receipt balance and cancellation dependencies |
+| `bank-reconciliation` | statement matching, unreconciled items and close controls |
+| `stockcount` | offline scan batches, six variance classes, second-person posting |
 | `concurrency` | two users clicking at once — see below |
-| `hardening` | forged tokens, throttling, oversized documents |
+| `hardening` | forged/rotated tokens, database-backed throttling, oversized documents |
+| `db-parser` | unsafe numeric/int8 values are refused before JavaScript can round them |
 
 `concurrency.test.ts` exists because the suite once had tests *named* for
 guarantees it did not have. "A dispatch cannot be invoiced twice" fired its two
@@ -129,10 +156,15 @@ rule is an INSERT.
 **One ledger per posting role.** `posting_role` is an enum with a unique index,
 so nothing ever resolves an account by matching on its name.
 
-**Money is integer paise.** `numeric(14,2)` arrives in JavaScript as a double,
-and adding a page of invoices as doubles produced `555407.2000000001`. Every
-sum goes through `src/money.ts`, which works in paise and returns to rupees at
-the boundary.
+**Money is integer paise.** PostgreSQL numeric and int8 values are accepted by
+the API only when their scaled integer is inside JavaScript's safe range; an
+unsafe value is rejected instead of silently rounded. Every sum goes through
+`src/money.ts`, which works in paise and returns to rupees at the boundary.
+
+**A clerk may compare without losing a draft.** Up to eight ERP screens remain
+mounted in an accessible workspace. Read-only data is briefly cached and
+revalidated; every successful financial write invalidates the cache, and no
+accounting write is shown optimistically.
 
 **Tenancy is the database's job.** Every tenant-scoped table has RLS keyed on
 `current_setting('app.tenant_id')`, and the API connects as a non-owner role
@@ -157,6 +189,8 @@ trusted to the screen.
 |---|---|
 | Tax invoice + IRP (INV-1 v1.1) payload | Accounts → Tax Invoices |
 | Delivery challan, Rule 55 | Inventory → Delivery Challans |
+| Customer packing list, derived from posted dispatch pieces | Inventory → Packing Lists |
+| Supplier purchase order and remaining receipt quantity | Inventory → Purchase Orders |
 | E-way bill, Rule 138 (NIC EWB v1.03 payload) | GST → E-Way Bills |
 | ITC-04, tables 4 and 5A | GST → ITC-04 |
 | GSTR-1 B2B and HSN, GSTR-3B outward, GSTR-2B reconciliation | GST |
@@ -173,41 +207,39 @@ behind the department's back. Only the owner can unlock one.
 
 These are real and deliberate, not oversights:
 
-- **Nothing has been sent to a live IRP or e-way bill portal.** Both clients and
-  both payloads are validated locally against the published schemas and tested
-  against a fake transport; neither has made a sandbox round-trip, because both
-  need a GSP subscription. `docs/einvoice-schema.md` records exactly which field
-  rules were verified and which were not.
+- **No live statutory round trip is proven.** Both clients and payloads are
+  validated locally against published schemas and a fake transport, but neither
+  has made a GSP/IRP sandbox round trip. `docs/einvoice-schema.md` records the
+  verified field rules and remaining external checks.
 - **The returns *filing* API is not built.** GSTR-1, 3B, 2B and ITC-04 figures
   are produced, reconciled and exportable; submitting them to the portal is not.
 - **TCS is deliberately absent.** 206C(1H) was withdrawn with effect from
   1 April 2025, so charging it would be wrong. See `docs/tds-rates.md`.
 - **TDS is computed and posted but not filed** — no 26Q return or challan.
-- **The token is in `localStorage`** and lives twelve hours with no refresh.
-  Revocation, deactivation and role changes take effect immediately — they are
-  re-read from the database on every request — but XSS would still yield a
-  usable token.
-- **A split must add up exactly.** Cutting 118 metres into 40 + 40 is refused;
-  the operator has to enter the offcut as its own piece. The cutting loss a
-  floor actually leaves needs a write-off document, and that is not built.
-- **There is no physical stock count.** Nothing compares the rack to the ledger,
-  so a discrepancy is only ever found by someone noticing.
+- **Purchase brokerage is not auto-posted.** Sales brokerage resolves the
+  configured broker/rule and accrues in the invoice voucher; purchase
+  brokerage may need capitalisation or expensing, so its accounting treatment
+  remains a CA decision rather than a guessed posting.
 - **No CA has audited the books and no mill has run a day's work through it.**
   That remains the only measurement that counts.
+- **Cross-company staff invitations are deliberately absent.** An owner may
+  create, disable, re-enable, role-change, and reset a worker for this company;
+  an existing user from another company cannot be attached until an auditable
+  invitation flow is designed and tested.
 
 ## Measured, not assumed
 
-Built at a year's volume — 1.5 lakh pieces, 4.65 lakh movements, 209 MB — with
+Built at a year's volume — 1.5 lakh pieces, 4.65 lakh movements, 210 MB — with
 `link-erp/db/load/run.sh`, which fails the build if any of these regresses:
 
 | | measured | budget |
 |---|---|---|
-| Barcode lookup, the query the floor runs all day | 1.4 ms | 50 ms |
-| One piece's whole history | 23 ms | 100 ms |
-| Invoice list, page 40 (the deep offset) | 1.3 ms | 250 ms |
-| Trial balance | 9 ms | 500 ms |
-| Balance sheet | 26 ms | 800 ms |
-| Owner's dashboard, all fourteen figures | 153 ms | 1500 ms |
-| Spine-drift check across every piece | 244 ms | 2000 ms |
+| Barcode lookup, the query the floor runs all day | 4.7 ms | 50 ms |
+| One piece's whole history | 34.2 ms | 100 ms |
+| Invoice list, page 40 (the deep offset) | 4.0 ms | 250 ms |
+| Trial balance | 23.5 ms | 500 ms |
+| Balance sheet | 51.6 ms | 800 ms |
+| Owner's dashboard, all fourteen figures | 265.3 ms | 1500 ms |
+| Spine-drift check across every piece | 1524.0 ms | 2000 ms |
 
 Every one is index-driven; the plans are in `load/measure.sql`.
