@@ -14,6 +14,8 @@ FILE="${1:?usage: restore.sh <dump-file> [target-db]}"
 TARGET="${2:-linkerp_restore_check}"
 DB_LIVE="${POSTGRES_DB:-linkerp}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib-release.sh
+source "${HERE}/scripts/lib-release.sh"
 
 [ -f "${FILE}" ] || { echo "no such file: ${FILE}" >&2; exit 1; }
 # Database names are interpolated only where PostgreSQL cannot parameterise an
@@ -30,9 +32,15 @@ if [ -z "${PGHOST:-}" ] && docker compose -f "${HERE}/docker-compose.yml" ps db 
   restore_archive() { cat "${FILE}" | "${RESTORE[@]}" -d "${TARGET}" --no-owner --role=postgres; }
 else
   PSQL=(psql -U postgres)
-  RESTORE=(pg_restore -U postgres)
-  verify_archive() { "${RESTORE[@]}" --list "${FILE}" > /dev/null; }
-  restore_archive() { "${RESTORE[@]}" -d "${TARGET}" --no-owner --role=postgres "${FILE}"; }
+  select_pg_archive_mode "${DB_LIVE}"
+  if [ -n "${PG_ARCHIVE_IMAGE_SELECTED}" ]; then
+    verify_archive() { docker_pg_archive pg_restore --list < "${FILE}" > /dev/null; }
+    restore_archive() { docker_pg_archive pg_restore -d "${TARGET}" --no-owner --role=postgres < "${FILE}"; }
+  else
+    RESTORE=(pg_restore -U postgres)
+    verify_archive() { "${RESTORE[@]}" --list "${FILE}" > /dev/null; }
+    restore_archive() { "${RESTORE[@]}" -d "${TARGET}" --no-owner --role=postgres "${FILE}"; }
+  fi
 fi
 
 verify_archive || { echo "not a readable archive" >&2; exit 1; }
@@ -60,14 +68,26 @@ restore_archive
 
 echo "==> checking the restore is usable"
 "${PSQL[@]}" -q -d "${TARGET}" -v ON_ERROR_STOP=1 <<'SQL'
-select 'migrations recorded: ' || count(*) from schema_migration;
-select 'tenants: ' || count(*) from tenant;
-set app.tenant_id = '11111111-1111-1111-1111-111111111111';
--- The books must still balance, or the archive is not worth keeping.
-select case when abs(coalesce(sum(debit - credit), 0)) < 0.01
-            then 'books balance'
-            else 'BOOKS OUT BY ' || sum(debit - credit)::text end
-  from voucher_line;
+do $$
+declare migrations integer; tenants integer; bad_vouchers integer; drifted_pieces integer;
+begin
+  select count(*) into migrations from schema_migration;
+  if migrations = 0 then raise exception 'restore contains no migration history'; end if;
+  select count(*) into tenants from tenant;
+  if tenants = 0 then raise exception 'restore contains no companies'; end if;
+  select count(*) into bad_vouchers from (
+    select v.id from voucher v join voucher_line line on line.voucher_id = v.id
+     where v.is_posted group by v.id having abs(sum(line.debit - line.credit)) >= 0.01
+  ) bad;
+  if bad_vouchers > 0 then raise exception 'restore contains % unbalanced posted voucher(s)', bad_vouchers; end if;
+  select count(*) into drifted_pieces from piece p
+   join lateral (select m.to_status, m.qty_after from piece_movement m
+                  where m.piece_id = p.id order by m.id desc limit 1) last on true
+   where p.status <> last.to_status or p.current_qty <> last.qty_after;
+  if drifted_pieces > 0 then raise exception 'restore contains % piece movement drift(s)', drifted_pieces; end if;
+  raise notice 'restore verified: % migration(s), % tenant(s), balanced vouchers, no piece drift',
+    migrations, tenants;
+end $$;
 SQL
 
 echo "restored into ${TARGET}"

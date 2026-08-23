@@ -86,35 +86,35 @@ export const PurchaseInvoiceView: React.FC = () => {
       )}
 
       <div className="flex-1 overflow-auto p-3 space-y-3">
-        <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-12 gap-2.5">
-          <div className="col-span-4">
-            <label className="erp-label block text-red-700 font-bold">* Supplier</label>
-            <select value={partyId} onChange={e => setPartyId(e.target.value)} className="erp-input w-full">
+        <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-1 md:grid-cols-12 gap-2.5">
+          <div className="md:col-span-4">
+            <label htmlFor="purchase-supplier" className="erp-label block text-red-700 font-bold">* Supplier</label>
+            <select id="purchase-supplier" value={partyId} onChange={e => setPartyId(e.target.value)} className="erp-input w-full">
               <option value="">— select —</option>
               {(ledgers.data ?? []).map(l => (
                 <option key={l.id} value={l.id}>{l.name}{l.gstin ? '' : ' (unregistered — RCM)'}</option>
               ))}
             </select>
           </div>
-          <div className="col-span-3">
-            <label className="erp-label block text-red-700 font-bold">* Their Invoice No.</label>
-            <input value={supplierInvoiceNo} onChange={e => setSupplierInvoiceNo(e.target.value)}
+          <div className="md:col-span-3">
+            <label htmlFor="purchase-invoice-no" className="erp-label block text-red-700 font-bold">* Their Invoice No.</label>
+            <input id="purchase-invoice-no" value={supplierInvoiceNo} onChange={e => setSupplierInvoiceNo(e.target.value)}
                    className="erp-input w-full font-mono" />
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block">Invoice Date</label>
-            <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)}
+          <div className="md:col-span-2">
+            <label htmlFor="purchase-invoice-date" className="erp-label block">Invoice Date</label>
+            <input id="purchase-invoice-date" type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)}
                    className="erp-input w-full" />
           </div>
-          <div className="col-span-2">
-            <label className="erp-label block">Nature</label>
-            <select value={kind} onChange={e => setKind(e.target.value as 'grey' | 'jobwork')}
+          <div className="md:col-span-2">
+            <label htmlFor="purchase-nature" className="erp-label block">Nature</label>
+            <select id="purchase-nature" value={kind} onChange={e => setKind(e.target.value as 'grey' | 'jobwork')}
                     className="erp-input w-full">
               <option value="grey">Grey purchase</option>
               <option value="jobwork">Jobwork / processing</option>
             </select>
           </div>
-          <div className="col-span-1 flex items-end">
+          <div className="md:col-span-1 flex items-end">
             <label className="flex items-center gap-1.5 cursor-pointer font-medium pb-1">
               <input type="checkbox" checked={itcEligible}
                      onChange={e => setItcEligible(e.target.checked)} className="w-4 h-4 rounded" />
@@ -149,7 +149,7 @@ export const PurchaseInvoiceView: React.FC = () => {
               {lines.map((l, i) => (
                 <tr key={i} className="border-b border-slate-100">
                   <td className="px-2 py-1">
-                    <select value={l.hsnCode}
+                    <select aria-label={`HSN for purchase line ${i + 1}`} value={l.hsnCode}
                             onChange={e => {
                               const h = (hsn.data ?? []).find(x => x.code === e.target.value);
                               update(i, { hsnCode: e.target.value, gstRate: Number(h?.gst_rate ?? l.gstRate) });
@@ -159,16 +159,16 @@ export const PurchaseInvoiceView: React.FC = () => {
                     </select>
                   </td>
                   <td className="px-2 py-1">
-                    <input value={l.description} onChange={e => update(i, { description: e.target.value })}
+                    <input aria-label={`Description for purchase line ${i + 1}`} value={l.description} onChange={e => update(i, { description: e.target.value })}
                            className="erp-input w-full" placeholder="what was bought" />
                   </td>
                   <td className="px-2 py-1 text-right">
-                    <input type="number" step="0.01" value={l.qty}
+                    <input aria-label={`Quantity for purchase line ${i + 1}`} type="number" step="0.01" value={l.qty}
                            onChange={e => update(i, { qty: Number(e.target.value) })}
                            className="erp-input w-24 text-right font-mono" />
                   </td>
                   <td className="px-2 py-1 text-right">
-                    <input type="number" step="0.01" value={l.rate}
+                    <input aria-label={`Rate for purchase line ${i + 1}`} type="number" step="0.01" value={l.rate}
                            onChange={e => update(i, { rate: Number(e.target.value) })}
                            className="erp-input w-24 text-right font-mono" />
                   </td>

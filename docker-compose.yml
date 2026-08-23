@@ -3,7 +3,7 @@
 #   cp .env.example .env && edit it        # secrets do not live in this file
 #   docker compose up -d --build
 #   docker compose exec -T db psql -U postgres -d linkerp < /dev/null   # ready?
-#   ./scripts/migrate.sh                   # schema and seed
+#   ./scripts/migrate.sh                   # schema only; never demo seed a real mill
 #
 # Then http://localhost:8080.
 
@@ -20,7 +20,7 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
       - ./link-erp/db:/db:ro
-      - ./backups:/backups
+      - ${BACKUP_DIR:-./backups}:/backups
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-linkerp}"]
       interval: 10s
@@ -37,14 +37,66 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://link_erp_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}@db:5432/${POSTGRES_DB:-linkerp}
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-linkerp}
+      PGUSER: link_erp_app
+      PGPASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      JWT_KEY_ID: ${JWT_KEY_ID:-current}
+      JWT_PREVIOUS_SECRETS: ${JWT_PREVIOUS_SECRETS:-}
+      # Development fallback only. Production preflight requires a unique key.
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:-MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
       FORCE_HTTPS: ${FORCE_HTTPS:-false}
       PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-600}
+      RATE_LIMIT_MODE: ${RATE_LIMIT_MODE:-database}
+      LOG_REQUESTS: ${LOG_REQUESTS:-true}
       TZ: Asia/Kolkata
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     expose:
       - "4000"
+
+  # This one-off, profile-gated service is the only supported way to initialise
+  # a real company.  It connects with the protected database credential, never
+  # through the application role, and has no published port or restart policy.
+  bootstrap:
+    build: ./server
+    profiles: ["tools"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      PGDATABASE: ${POSTGRES_DB:-linkerp}
+      BOOTSTRAP_CONFIRM: ${BOOTSTRAP_CONFIRM:-}
+      BOOTSTRAP_LEGAL_NAME: ${BOOTSTRAP_LEGAL_NAME:-}
+      BOOTSTRAP_GSTIN: ${BOOTSTRAP_GSTIN:-}
+      BOOTSTRAP_PAN: ${BOOTSTRAP_PAN:-}
+      BOOTSTRAP_STATE_CODE: ${BOOTSTRAP_STATE_CODE:-}
+      BOOTSTRAP_FY_START: ${BOOTSTRAP_FY_START:-}
+      BOOTSTRAP_ADDRESS1: ${BOOTSTRAP_ADDRESS1:-}
+      BOOTSTRAP_ADDRESS2: ${BOOTSTRAP_ADDRESS2:-}
+      BOOTSTRAP_CITY: ${BOOTSTRAP_CITY:-}
+      BOOTSTRAP_PINCODE: ${BOOTSTRAP_PINCODE:-}
+      BOOTSTRAP_PHONE: ${BOOTSTRAP_PHONE:-}
+      BOOTSTRAP_EMAIL: ${BOOTSTRAP_EMAIL:-}
+      BOOTSTRAP_OWNER_NAME: ${BOOTSTRAP_OWNER_NAME:-}
+      BOOTSTRAP_OWNER_EMAIL: ${BOOTSTRAP_OWNER_EMAIL:-}
+      BOOTSTRAP_OWNER_PASSWORD: ${BOOTSTRAP_OWNER_PASSWORD:-}
+    entrypoint: ["node", "--experimental-strip-types", "src/bootstrap-tenant.ts"]
 
   web:
     build:
@@ -53,7 +105,8 @@ services:
         VITE_API_BASE: /api-proxy
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "${WEB_PORT:-8080}:80"
 

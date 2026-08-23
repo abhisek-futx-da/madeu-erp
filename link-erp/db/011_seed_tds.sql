@@ -27,6 +27,8 @@ update ledger_account set tds_section = '194C-OTH'
    and tds_section is distinct from '194C-OTH';
 
 insert into financial_year (tenant_id, label, starts_on, ends_on, status) values
+  ('11111111-1111-1111-1111-111111111111','2023-24','2023-04-01','2024-03-31','open'),
+  ('11111111-1111-1111-1111-111111111111','2024-25','2024-04-01','2025-03-31','open'),
   ('11111111-1111-1111-1111-111111111111','2025-26','2025-04-01','2026-03-31','closed'),
   ('11111111-1111-1111-1111-111111111111','2026-27','2026-04-01','2027-03-31','open')
 on conflict (tenant_id, label) do nothing;

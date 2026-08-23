@@ -12,6 +12,7 @@ const WEAVER = '33333333-0000-0000-0000-000000000105';   // L.R. Textiles, Mahar
 const PROCESS = '33333333-0000-0000-0000-000000000202';  // Prayag Texprint, Maharashtra
 const MADURAI = '33333333-0000-0000-0000-000000000701';  // Supreme Textile, Tamil Nadu (33)
 const BHIWANDI = '33333333-0000-0000-0000-000000000629'; // Kanhaiya Textiles, Maharashtra (27)
+const BROKER = '33333333-0000-0000-0000-000000000801';   // Venugopal Mudaliar
 const GALAXY = '44444444-0000-0000-0000-000000000001';
 
 let token = '';
@@ -142,6 +143,79 @@ test('a dispatch cannot be invoiced twice', async () => {
   const second = await api('/api/sales-invoices', { method: 'POST', body: { dispatchId } });
   assert.equal(second.status, 400);
   assert.match(second.body.error, /already invoiced/i);
+});
+
+test('the owner-selected invoice rounding policy changes real invoice totals', async () => {
+  const saved = await api('/api/configuration/settings', {
+    method: 'POST', body: { invoiceRounding: 'none', enforceCreditLimit: true }
+  });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+
+  const purchase = await api('/api/purchase-invoices', {
+    method: 'POST',
+    body: {
+      partyId: WEAVER, supplierInvoiceNo: `ROUND-${stamp}`, invoiceDate: '2026-09-09',
+      kind: 'grey',
+      lines: [{ hsnCode: '551311', description: 'rounding proof', qty: 1, rate: 1, gstRate: 5 }]
+    }
+  });
+  assert.equal(purchase.status, 201, JSON.stringify(purchase.body));
+  assert.equal(purchase.body.invoiceTotal, 1.06);
+
+  const restored = await api('/api/configuration/settings', {
+    method: 'POST', body: { invoiceRounding: 'nearest_rupee', enforceCreditLimit: true }
+  });
+  assert.equal(restored.status, 200);
+});
+
+test('a configured sales broker accrues in the invoice voucher and cancellation reverses it', async () => {
+  const before = await api('/api/reports/party-balance');
+  const beforeExpense = Number(before.body.find((row: any) => row.code === '982')?.balance ?? 0);
+  const beforeBroker = Number(before.body.find((row: any) => row.code === '801')?.balance ?? 0);
+  const { barcodes, rate } = await pieceReadyToShip('BR', 1, 100, 50);
+  const order = await api('/api/sales-orders', {
+    method: 'POST',
+    body: {
+      partyId: MADURAI, brokerId: BROKER, orderDate: '2026-09-01',
+      lines: [{ qualityId: GALAXY, gradeCode: 'A', pcs: 1, cutLength: 100, qty: 100, rate }]
+    }
+  });
+  assert.equal(order.status, 201, JSON.stringify(order.body));
+  const orders = await api('/api/sales-orders?limit=500');
+  const booked = orders.body.rows.find((row: any) => row.id === order.body.id);
+  assert.ok(booked?.lines[0]?.id, 'the order line must be addressable by dispatch');
+
+  const dispatch = await api('/api/dispatches', {
+    method: 'POST',
+    body: {
+      partyId: MADURAI, challanNo: `INVDC-${stamp}-BR`, challanDate: '2026-09-10',
+      lines: [{ barcode: barcodes[0], rate, soLineId: booked.lines[0].id }]
+    }
+  });
+  assert.equal(dispatch.status, 201, JSON.stringify(dispatch.body));
+
+  const invoice = await api('/api/sales-invoices', {
+    method: 'POST', body: { dispatchId: dispatch.body.id, invoiceDate: '2026-09-10' }
+  });
+  assert.equal(invoice.status, 201, JSON.stringify(invoice.body));
+  assert.equal(invoice.body.taxableValue, 5000);
+  assert.equal(invoice.body.brokerId, BROKER);
+  assert.equal(invoice.body.brokerage, 25, '0.5% of taxable value must accrue exactly');
+
+  const posted = await api('/api/reports/party-balance');
+  assert.equal(Number(posted.body.find((row: any) => row.code === '982')?.balance), beforeExpense + 25,
+    'brokerage expense must be debited');
+  assert.equal(Number(posted.body.find((row: any) => row.code === '801')?.balance), beforeBroker - 25,
+    'the broker must be credited');
+
+  const cancelled = await api(`/api/documents/sales_invoice/${invoice.body.id}/cancel`, {
+    method: 'POST', body: { reason: 'brokerage reversal proof' }
+  });
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+
+  const reversed = await api('/api/reports/party-balance');
+  assert.equal(Number(reversed.body.find((row: any) => row.code === '982')?.balance), beforeExpense);
+  assert.equal(Number(reversed.body.find((row: any) => row.code === '801')?.balance), beforeBroker);
 });
 
 test('the e-invoice payload is stored and matches the NIC schema', async () => {

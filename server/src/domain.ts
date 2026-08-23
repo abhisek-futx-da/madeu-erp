@@ -166,9 +166,12 @@ export async function postDyeingIssue(
 ) {
   if (barcodes.length === 0) throw new Error('a dyeing challan needs at least one piece');
 
-  const pieces = await many<{ id: string; barcode: string; status: string; current_qty: number }>(
+  const pieces = await many<{
+    id: string; barcode: string; status: string; current_qty: number;
+    quality_id: string; grade_code: string;
+  }>(
     ctx.db,
-    `select id, barcode, status, current_qty from piece
+    `select id, barcode, status, current_qty, quality_id, grade_code from piece
       where barcode = any($1::text[]) order by id for update`,
     [barcodes]
   );
@@ -256,9 +259,10 @@ export async function postDyeingReceipt(
        join dyeing_issue di on di.id = il.issue_id
       where p.barcode = any($1::text[])
         and di.process_house_id = $2
-        and not exists (select 1 from dyeing_receipt_line rl where rl.issue_line_id = il.id)
+        and not exists (select 1 from dyeing_receipt_line rl
+                         where rl.issue_line_id = il.id and rl.active)
       order by p.id
-      for update of p`,
+      for update of p, il`,
     [barcodes, header.processHouseId]
   );
   assertAllFound(barcodes, rows.map(r => ({ barcode: r.barcode })));
@@ -387,9 +391,12 @@ export async function postDispatch(
   if (lines.length === 0) throw new Error('a dispatch needs at least one piece');
 
   const barcodes = lines.map(l => l.barcode);
-  const pieces = await many<{ id: string; barcode: string; status: string; current_qty: number }>(
+  const pieces = await many<{
+    id: string; barcode: string; status: string; current_qty: number;
+    quality_id: string; grade_code: string;
+  }>(
     ctx.db,
-    `select id, barcode, status, current_qty from piece
+    `select id, barcode, status, current_qty, quality_id, grade_code from piece
       where barcode = any($1::text[]) order by id for update`,
     [barcodes]
   );
@@ -397,6 +404,48 @@ export async function postDispatch(
   const wrong = pieces.filter(p => p.status !== 'cut_packed' && p.status !== 'received_finish');
   if (wrong.length > 0) {
     throw new Error(`not ready to dispatch: ${wrong.map(p => `${p.barcode} (${p.status})`).join(', ')}`);
+  }
+
+  const byBarcode = new Map(pieces.map(p => [p.barcode, p]));
+  const soIds = [...new Set(lines.flatMap(line => line.soLineId ? [line.soLineId] : []))];
+  if (soIds.length > 0) {
+    const orderLines = await many<{
+      id: string; party_id: string; order_no: string; status: string;
+      quality_id: string; grade_code: string; qty: number; dispatched_qty: number;
+    }>(ctx.db,
+      `select sl.id, so.party_id, so.order_no, so.status::text, sl.quality_id,
+              sl.grade_code, sl.qty, sl.dispatched_qty
+         from finish_sales_order_line sl
+         join finish_sales_order so on so.id = sl.order_id
+        where sl.id = any($1::uuid[]) order by sl.id for update of sl`, [soIds]);
+    if (orderLines.length !== soIds.length) throw new Error('one or more sales-order lines do not exist');
+    const orderById = new Map(orderLines.map(line => [line.id, line]));
+    const allocated = new Map<string, number>();
+    for (const line of lines) {
+      if (!line.soLineId) continue;
+      const orderLine = orderById.get(line.soLineId)!;
+      const piece = byBarcode.get(line.barcode)!;
+      if (orderLine.party_id !== header.partyId) {
+        throw new Error(`${orderLine.order_no} belongs to a different customer`);
+      }
+      if (!['approved', 'partly_done'].includes(orderLine.status)) {
+        throw new Error(`${orderLine.order_no} is ${orderLine.status}`);
+      }
+      if (orderLine.quality_id !== piece.quality_id || orderLine.grade_code !== piece.grade_code) {
+        throw new Error(
+          `${line.barcode} quality/grade ${piece.quality_id}/${piece.grade_code} does not match ` +
+          `${orderLine.order_no} line ${orderLine.quality_id}/${orderLine.grade_code}`
+        );
+      }
+      allocated.set(line.soLineId, (allocated.get(line.soLineId) ?? 0) + Number(piece.current_qty));
+    }
+    for (const [lineId, qty] of allocated) {
+      const orderLine = orderById.get(lineId)!;
+      const balance = Number(orderLine.qty) - Number(orderLine.dispatched_qty);
+      if (qty > balance + 0.005) {
+        throw new Error(`${orderLine.order_no} has only ${balance.toFixed(2)} remaining on that line`);
+      }
+    }
   }
 
   // Credit control, before the truck loads rather than after.
@@ -416,7 +465,6 @@ export async function postDispatch(
     }
   }
 
-  const byBarcode = new Map(pieces.map(p => [p.barcode, p]));
   // Our own outward challan: use the number the user typed, else the series.
   const dispatchNo = header.challanNo?.trim()
     || await nextDocNumber(ctx.db, ctx.tenantId, 'dispatch', ctx.fy);
@@ -477,9 +525,23 @@ export async function postDispatch(
     await ctx.db.query(
       `update finish_sales_order_line sl
           set dispatched_qty = sl.dispatched_qty + x.qty
-         from unnest($1::uuid[], $2::numeric[]) as x(so_line_id, qty)
+         from (select so_line_id, sum(qty) as qty
+                 from unnest($1::uuid[], $2::numeric[]) as raw(so_line_id, qty)
+                group by so_line_id) x
         where sl.id = x.so_line_id`,
       [withSo.map(r => r.soLineId), withSo.map(r => r.qty)]
+    );
+    await ctx.db.query(
+      `update finish_sales_order so
+          set status = case
+            when not exists (select 1 from finish_sales_order_line sl
+                              where sl.order_id = so.id and sl.dispatched_qty < sl.qty)
+              then 'closed'::doc_status
+            else 'partly_done'::doc_status
+          end
+        where so.id in (select distinct order_id from finish_sales_order_line
+                         where id = any($1::uuid[]))`,
+      [withSo.map(r => r.soLineId)]
     );
   }
 

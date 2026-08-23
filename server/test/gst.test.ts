@@ -222,3 +222,11 @@ test('purchase postings balance when the total needs rounding', () => {
   assert.ok(Math.abs(drift) < 0.005, `purchase postings drifted by ${drift}`);
   assert.ok(led.party);
 });
+
+test('no-rounding policy preserves the exact paise total', () => {
+  const inv = computeInvoice(
+    '27', '27', regular, [line({ qty: 1, rate: 1, gstRate: 5 })], { rounding: 'none' }
+  );
+  assert.equal(inv.invoiceTotal, 1.06);
+  assert.equal(inv.roundOff, 0);
+});

@@ -1,0 +1,20 @@
+# Copy this file to a protected location, fill it once, and delete it after a
+# successful bootstrap. Do not commit it, send it on WhatsApp, or screenshot it.
+# It creates an EMPTY real company; it never imports the demo tenant.
+BOOTSTRAP_CONFIRM=CREATE_REAL_MILL
+BOOTSTRAP_LEGAL_NAME=Replace with registered legal name
+BOOTSTRAP_GSTIN=27ABCDE1234F1Z5
+BOOTSTRAP_PAN=ABCDE1234F
+BOOTSTRAP_STATE_CODE=27
+BOOTSTRAP_FY_START=2026-04-01
+BOOTSTRAP_ADDRESS1=Registered address line one
+BOOTSTRAP_ADDRESS2=
+BOOTSTRAP_CITY=City
+BOOTSTRAP_PINCODE=400001
+BOOTSTRAP_PHONE=
+BOOTSTRAP_EMAIL=accounts@example.in
+BOOTSTRAP_OWNER_NAME=Named company owner
+BOOTSTRAP_OWNER_EMAIL=owner@example.in
+# 12+ characters with upper, lower, and number. Deliver privately, then make
+# the owner change it at the first sign-in.
+BOOTSTRAP_OWNER_PASSWORD=ReplaceWithAStrongPrivatePassword1

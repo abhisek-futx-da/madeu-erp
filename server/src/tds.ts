@@ -161,6 +161,11 @@ export interface CloseResult {
   totalCredit: number;
 }
 
+function followingFyLabel(label: string) {
+  const start = Number(label.slice(0, 4)) + 1;
+  return `${start}-${String(start + 1).slice(-2)}`;
+}
+
 /**
  * Closes a financial year: proves the books balance, carries every balance
  * sheet account forward as an opening balance, then locks the year so nothing
@@ -171,22 +176,85 @@ export async function closeFinancialYear(
 ): Promise<CloseResult> {
   const fy = await one<{ starts_on: string; ends_on: string; status: string }>(
     ctx.db,
-    'select starts_on::text, ends_on::text, status from financial_year where label = $1',
+    `select starts_on::text, ends_on::text, status
+       from financial_year where label = $1 for update`,
     [label]
   );
   if (!fy) throw new Error(`financial year ${label} does not exist`);
   if (fy.status === 'closed') throw new Error(`financial year ${label} is already closed`);
+  if (fy.status !== 'open') throw new Error(`financial year ${label} is ${fy.status}`);
+  const expectedNext = followingFyLabel(label);
+  if (nextLabel !== expectedNext) {
+    throw new Error(`the year after ${label} must be ${expectedNext}`);
+  }
+
+  await ctx.db.query(
+    `insert into financial_year (tenant_id, label, starts_on, ends_on, status)
+     values ($1, $2, ($3::date + 1), ($3::date + interval '1 year')::date, 'open')
+     on conflict (tenant_id, label) do nothing`,
+    [ctx.tenantId, nextLabel, fy.ends_on]
+  );
+  const nextFy = await one<{ starts_on: string; ends_on: string; status: string }>(
+    ctx.db,
+    `select starts_on::text, ends_on::text, status
+       from financial_year where label = $1 for update`,
+    [nextLabel]
+  );
+  if (!nextFy || nextFy.starts_on !== addDays(fy.ends_on, 1)
+      || nextFy.ends_on !== addYears(fy.ends_on, 1)) {
+    throw new Error(`${nextLabel} is not the consecutive financial year after ${label}`);
+  }
+  if (nextFy.status === 'pending') {
+    await ctx.db.query(
+      `update financial_year set status='open' where label=$1`, [nextLabel]
+    );
+    nextFy.status = 'open';
+  }
+  if (nextFy.status !== 'open') {
+    throw new Error(`next financial year ${nextLabel} is ${nextFy.status}`);
+  }
+
+  await ctx.db.query(
+    `insert into document_series (tenant_id, doc_type, fy_label, prefix, next_number)
+     select tenant_id, doc_type, $1, replace(prefix, $2, $3), 1
+       from document_series where fy_label = $4
+     on conflict (tenant_id, doc_type, fy_label) do nothing`,
+    [nextLabel, label.slice(2), nextLabel.slice(2), label]
+  );
+
+  const invalidOpening = await one<{ ledger: string }>(
+    ctx.db,
+    `select la.name as ledger
+       from opening_balance ob
+       join ledger_account la on la.id = ob.ledger_id
+       join control_account ca on ca.id = la.control_account_id
+      where ob.fy_label = $1
+        and ca.nature in ('income', 'expense')
+        and abs(ob.debit - ob.credit) > 0.005
+      limit 1`,
+    [label]
+  );
+  if (invalidOpening) {
+    throw new Error(`income or expense ledger ${invalidOpening.ledger} cannot carry an opening balance`);
+  }
 
   const balances = await many<{ ledger_id: string; balance: number; nature: string }>(
     ctx.db,
-    `select vl.ledger_id, sum(vl.debit - vl.credit) as balance, ca.nature
-       from voucher_line vl
-       join voucher v on v.id = vl.voucher_id and v.is_posted
-       join ledger_account la on la.id = vl.ledger_id
+    `select x.ledger_id, sum(x.balance) as balance, ca.nature
+       from (
+         select ob.ledger_id, ob.debit - ob.credit as balance
+           from opening_balance ob
+          where ob.fy_label = $3
+         union all
+         select vl.ledger_id, vl.debit - vl.credit as balance
+           from voucher_line vl
+           join voucher v on v.id = vl.voucher_id and v.is_posted
+          where v.voucher_date between $1 and $2
+       ) x
+       join ledger_account la on la.id = x.ledger_id
        join control_account ca on ca.id = la.control_account_id
-      where v.voucher_date between $1 and $2
-      group by vl.ledger_id, ca.nature`,
-    [fy.starts_on, fy.ends_on]
+      group by x.ledger_id, ca.nature`,
+    [fy.starts_on, fy.ends_on, label]
   );
 
   const drift = sumBy(balances, b => Number(b.balance));
@@ -255,11 +323,40 @@ export async function reopenFinancialYear(ctx: Ctx, label: string, nextLabel: st
   if (!fy) throw new Error(`financial year ${label} does not exist`);
   if (fy.status !== 'closed') throw new Error(`financial year ${label} is not closed`);
 
+  const next = await one<{ starts_on: string }>(
+    ctx.db, 'select starts_on::text from financial_year where label = $1', [nextLabel]
+  );
+  if (!next) throw new Error(`next financial year ${nextLabel} does not exist`);
+  const posted = await one<{ n: number }>(
+    ctx.db,
+    `select count(*)::int as n from voucher
+      where is_posted and voucher_date >= $1`,
+    [next.starts_on]
+  );
+  if ((posted?.n ?? 0) > 0) {
+    throw new Error(`cannot reopen ${label}: ${nextLabel} already contains posted vouchers`);
+  }
+
   await ctx.db.query('delete from opening_balance where fy_label = $1', [nextLabel]);
+  await ctx.db.query(
+    `update financial_year set status='pending' where label=$1`, [nextLabel]
+  );
   await ctx.db.query(
     `update financial_year set status = 'open', closed_at = null, closed_by = null
       where label = $1`,
     [label]
   );
   return { fyLabel: label, status: 'open' as const };
+}
+
+function addDays(date: string, days: number) {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function addYears(date: string, years: number) {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCFullYear(d.getUTCFullYear() + years);
+  return d.toISOString().slice(0, 10);
 }

@@ -13,7 +13,8 @@ interface InvoiceRow {
   place_of_supply: string; supply_type: string;
   taxable_value: number; cgst_amount: number; sgst_amount: number;
   igst_amount: number; round_off: number; invoice_total: number;
-  party_name: string; gstin: string | null;
+  party_name: string; gstin: string | null; brokerage_amount: number;
+  broker_name: string | null;
   filing_status: string | null; irn: string | null; last_error: string | null;
   ewb_no: string | null; ewb_ref: string | null;
 }
@@ -51,6 +52,7 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
       setNotice(
         `Invoice ${out.invoiceNo}: ${SUPPLY_LABEL[out.supplyType]}, taxable ${money(out.taxableValue)}, ` +
         `total ${money(out.invoiceTotal)}` +
+        (out.brokerage > 0 ? `; brokerage accrued ${money(out.brokerage)}` : '') +
         (out.einvoiceReady ? ' — e-invoice payload ready' : ` — payload blocked: ${out.einvoiceIssues.map((i: any) => i.field).join(', ')}`)
       );
       invoices.reload();
@@ -169,6 +171,7 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
                 <th className="px-2 py-1.5 font-bold text-right">SGST</th>
                 <th className="px-2 py-1.5 font-bold text-right">IGST</th>
                 <th className="px-2 py-1.5 font-bold text-right">Total</th>
+                <th className="px-2 py-1.5 font-bold text-right">Brokerage</th>
                 <th className="px-2 py-1.5 font-bold">IRP</th>
                 <th className="px-2 py-1.5"></th>
               </tr>
@@ -186,6 +189,7 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
                   <td className="px-2 py-1 text-right font-mono">{money(i.sgst_amount)}</td>
                   <td className="px-2 py-1 text-right font-mono">{money(i.igst_amount)}</td>
                   <td className="px-2 py-1 text-right font-mono font-bold">{money(i.invoice_total)}</td>
+                  <td className="px-2 py-1 text-right font-mono" title={i.broker_name ?? undefined}>{i.brokerage_amount > 0 ? money(i.brokerage_amount) : '—'}</td>
                   <td className="px-2 py-1">
                     <span className={`px-1.5 py-0.5 rounded border font-semibold ${
                       i.irn ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
@@ -211,7 +215,7 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
                 </tr>
               ))}
               {!invoices.loading && invoices.rows.length === 0 && (
-                <tr><td colSpan={12} className="px-2 py-6 text-center text-slate-400">
+                <tr><td colSpan={13} className="px-2 py-6 text-center text-slate-400">
                   No invoices raised yet
                 </td></tr>
               )}

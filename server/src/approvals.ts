@@ -12,7 +12,8 @@ import { round2, sumBy } from './money.ts';
  */
 
 export type ApprovableDoc = 'sales_invoice' | 'purchase_invoice' | 'payment' | 'stock_count'
-  | 'grey_return' | 'dyeing_return' | 'customer_return' | 'write_off';
+  | 'grey_return' | 'dyeing_return' | 'customer_return' | 'write_off'
+  | 'dyeing_reprocess_receipt';
 
 export interface Posting { ledgerId: string; debit?: number; credit?: number }
 
@@ -100,7 +101,10 @@ const TABLE: Record<ApprovableDoc, { table: string; noColumn: string; amount: st
   grey_return:      { table: 'grey_return',      noColumn: 'entry_no',    amount: 'amount' },
   dyeing_return:    { table: 'dyeing_return',    noColumn: 'entry_no',    amount: 'amount' },
   customer_return:  { table: 'customer_return',  noColumn: 'entry_no',    amount: 'amount' },
-  write_off:        { table: 'write_off',        noColumn: 'entry_no',    amount: 'amount' }
+  write_off:        { table: 'write_off',        noColumn: 'entry_no',    amount: 'amount' },
+  dyeing_reprocess_receipt: {
+    table: 'dyeing_reprocess_receipt', noColumn: 'receipt_no', amount: 'amount'
+  }
 };
 
 /**

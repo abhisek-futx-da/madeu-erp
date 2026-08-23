@@ -36,6 +36,7 @@ const LABEL: Record<string, string> = {
   stock_count: 'Physical stock count',
   grey_return: 'Grey return to weaver',
   dyeing_return: 'Return to process house',
+  dyeing_reprocess_receipt: 'Reprocess job charge',
   customer_return: 'Customer return',
   write_off: 'Write-off / damage'
 };

@@ -7,13 +7,22 @@ production IRP filing, or a CA opinion has been obtained.
 ## Code evidence available for review
 
 - Clean database rebuild from all migrations; 14 database invariants pass.
-- 241 server tests pass: piece traceability, double entry, stock valuation,
+- 292 server tests pass with no skips: piece traceability, double entry, stock valuation,
   payments, cancellation, tenant isolation, concurrency, GST calculations,
-  e-invoice/e-way payload validation, physical counts, return flows, and
+  e-invoice/e-way payload validation, physical counts, return flows,
+  reprocessing, bank reconciliation, purchase/sales-order controls, and
   maker-checker approvals.
-- 65 frontend tests, frontend type-check, production build, API image build,
+- 81 frontend tests with no skips, frontend type-check, production build, API image build,
   and web image build pass.
+- The complete release pipeline passes 15/15 gates, including a previous-schema
+  upgrade rehearsal, exact migration/index audit, independent restore drill,
+  production dependency audits, and desktop/mobile browser checks.
 - The year-volume query harness passes its defined budgets.
+- Database-backed request throttling works across API replicas, JWT signing
+  keys can be rotated through a bounded previous-key window, and unsafe
+  PostgreSQL numerics are rejected instead of rounded.
+- Accessible workspace tabs preserve an unsaved operator draft while another
+  document is inspected; a browser gate proves the behavior.
 - Customer, grey, and dyeing returns are held until an independent accountant
   approves. A held document changes neither stock nor the ledger.
 - A customer return derives its quantity, price, tax, and credit note from the
@@ -22,6 +31,13 @@ production IRP filing, or a CA opinion has been obtained.
 - Each held financial exception records its submission, approval/rejection, or
   cancellation in the approval history. Cancelling before approval also drops
   the held voucher; it cannot be posted later by mistake.
+- Every pilot worker has a named company account. The owner can disable access
+  immediately, reset a password, and review an append-only access audit. The
+  database refuses to leave the company without an active owner.
+- The protected real-mill bootstrap has tests proving that it creates an empty,
+  usable tenant atomically, including the owner, system chart, posting ledgers,
+  financial year, document series, and stock-count approval; duplicate setup
+  leaves no partial company behind.
 
 ## CA review pack to supply
 
@@ -38,6 +54,11 @@ production IRP filing, or a CA opinion has been obtained.
    masters, party GSTINs, financial-year cut-off, approval limits, and physical
    stock-opening method.
 
+Before this pack is assembled, initialise the legal entity with the protected
+empty-company bootstrap described in `PRODUCTION_DEPLOYMENT.md`. It is safe to
+prove that no demo party, stock, banking data, or voucher entered the company;
+it is not safe to let the bootstrap guess any of the CA-reviewed values above.
+
 ## Questions the CA must answer in writing
 
 - Are opening stock value and opening ledger balances reconciled, and what is
@@ -48,6 +69,8 @@ production IRP filing, or a CA opinion has been obtained.
   GSTR-3B, ITC-04, books, and audit workflow?
 - Are return, credit-note, debit-note, cancellation, and amendment policies
   correct for filed and unfiled periods?
+- Should each category of purchase brokerage be expensed immediately or
+  capitalised into stock, and what GST/TDS treatment applies to the broker bill?
 - Which reports, approvals, retention periods, and audit exports are required
   before production sign-off?
 

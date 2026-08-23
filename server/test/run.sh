@@ -34,9 +34,17 @@ printf '%s\n' "${REBUILD}" | grep -E 'invariants:|FAIL' || true
 
 export DATABASE_URL="postgresql://link_erp_app@/${DB}?host=${PGHOST}&port=${PGPORT}"
 export JWT_SECRET="${JWT_SECRET:-test-only-secret}"
+export JWT_KEY_ID="${JWT_KEY_ID:-test-current}"
+export JWT_PREVIOUS_SECRETS="${JWT_PREVIOUS_SECRETS:-test-only-previous-secret-at-least-32-characters-long}"
+export MFA_ENCRYPTION_KEY="${MFA_ENCRYPTION_KEY:-MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=}"
 export PORT="${PORT}"
 export API_BASE="http://127.0.0.1:${PORT}"
 export LOG_REQUESTS=false
+# The whole suite is one deliberately serial API process.  Its aggregate
+# request count is not an abusive client, so keep the production limiter out
+# of unrelated test outcomes; login throttling remains at its real setting.
+export RATE_LIMIT_PER_MINUTE="${RATE_LIMIT_PER_MINUTE:-10000}"
+export RATE_LIMIT_MODE="${RATE_LIMIT_MODE:-database}"
 
 echo "==> starting the api on :${PORT}"
 node --experimental-strip-types "${SERVER}/src/index.ts" > /tmp/link-erp-test-api.log 2>&1 &

@@ -128,25 +128,25 @@ export const LiveGreyInwardView: React.FC = () => {
       <div className="p-3 flex-1 overflow-y-auto max-w-7xl mx-auto w-full space-y-3">
         <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-1 md:grid-cols-12 gap-2.5">
           <div className="md:col-span-5">
-            <label className="erp-label block text-red-700 font-bold">* Weaver / Grey Supplier</label>
-            <select value={partyId} onChange={e => setPartyId(e.target.value)} className="erp-input w-full">
+            <label htmlFor="grey-supplier" className="erp-label block text-red-700 font-bold">* Weaver / Grey Supplier</label>
+            <select id="grey-supplier" value={partyId} onChange={e => setPartyId(e.target.value)} className="erp-input w-full">
               <option value="">— select —</option>
               {weavers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           </div>
           <div className="md:col-span-3">
-            <label className="erp-label block text-red-700 font-bold">* Their Challan No.</label>
-            <input value={challanNo} onChange={e => setChallanNo(e.target.value)}
+            <label htmlFor="grey-challan" className="erp-label block text-red-700 font-bold">* Their Challan No.</label>
+            <input id="grey-challan" value={challanNo} onChange={e => setChallanNo(e.target.value)}
                    className="erp-input w-full font-mono" />
           </div>
           <div className="md:col-span-2">
-            <label className="erp-label block">Challan Date</label>
-            <input type="date" value={challanDate} onChange={e => setChallanDate(e.target.value)}
+            <label htmlFor="grey-challan-date" className="erp-label block">Challan Date</label>
+            <input id="grey-challan-date" type="date" value={challanDate} onChange={e => setChallanDate(e.target.value)}
                    className="erp-input w-full" />
           </div>
           <div className="md:col-span-2">
-            <label className="erp-label block">Lot No.</label>
-            <input value={lotNo} onChange={e => setLotNo(e.target.value)}
+            <label htmlFor="grey-lot" className="erp-label block">Lot No.</label>
+            <input id="grey-lot" value={lotNo} onChange={e => setLotNo(e.target.value)}
                    className="erp-input w-full font-mono" placeholder="1100/B" />
           </div>
         </div>
@@ -185,11 +185,11 @@ export const LiveGreyInwardView: React.FC = () => {
                 <tr key={i} className="border-b border-slate-100">
                   <td className="px-2 py-1">{i + 1}</td>
                   <td className="px-2 py-1">
-                    <input value={l.barcode} onChange={e => update(i, { barcode: e.target.value })}
+                    <input aria-label={`Barcode for piece ${i + 1}`} value={l.barcode} onChange={e => update(i, { barcode: e.target.value })}
                            className="erp-input w-36 font-mono text-blue-800" />
                   </td>
                   <td className="px-2 py-1">
-                    <select value={l.qualityId} onChange={e => update(i, { qualityId: e.target.value })}
+                    <select aria-label={`Quality for piece ${i + 1}`} value={l.qualityId} onChange={e => update(i, { qualityId: e.target.value })}
                             className="erp-input w-40">
                       {(qualities.data ?? []).map(q => (
                         <option key={q.id} value={q.id}>{q.name}</option>
@@ -197,7 +197,7 @@ export const LiveGreyInwardView: React.FC = () => {
                     </select>
                   </td>
                   <td className="px-2 py-1">
-                    <select value={l.gradeCode} onChange={e => update(i, { gradeCode: e.target.value })}
+                    <select aria-label={`Grade for piece ${i + 1}`} value={l.gradeCode} onChange={e => update(i, { gradeCode: e.target.value })}
                             className="erp-input w-28">
                       {(grades.data ?? []).map(g => (
                         <option key={g.code} value={g.code}>{g.name}</option>
@@ -205,17 +205,17 @@ export const LiveGreyInwardView: React.FC = () => {
                     </select>
                   </td>
                   <td className="px-2 py-1 text-right">
-                    <input type="number" step="0.01" value={l.receivedQty}
+                    <input aria-label={`Received metres for piece ${i + 1}`} type="number" step="0.01" value={l.receivedQty}
                            onChange={e => update(i, { receivedQty: Number(e.target.value) })}
                            className="erp-input w-24 text-right font-mono" />
                   </td>
                   <td className="px-2 py-1 text-right">
-                    <input type="number" step="0.01" value={l.checkedQty}
+                    <input aria-label={`Checked metres for piece ${i + 1}`} type="number" step="0.01" value={l.checkedQty}
                            onChange={e => update(i, { checkedQty: Number(e.target.value) })}
                            className="erp-input w-24 text-right font-mono" />
                   </td>
                   <td className="px-2 py-1 text-right">
-                    <input type="number" step="0.01" value={l.rate}
+                    <input aria-label={`Rate for piece ${i + 1}`} type="number" step="0.01" value={l.rate}
                            onChange={e => update(i, { rate: Number(e.target.value) })}
                            className="erp-input w-20 text-right font-mono" />
                   </td>

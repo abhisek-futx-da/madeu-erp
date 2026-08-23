@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Menu, X } from 'lucide-react';
 
 /**
  * Grouped navigation. A flat bar worked at nine modules and does not at
  * twenty-five; the legacy system groups the same way on its menu bar.
  */
-export interface NavItem { id: string; label: string }
+export interface NavItem { id: string; label: string; ownerOnly?: boolean }
 export interface NavGroup { label: string; items: NavItem[] }
 
 export const NAV: NavGroup[] = [
@@ -14,6 +14,8 @@ export const NAV: NavGroup[] = [
     items: [
       { id: 'dashboard', label: 'Dashboard' },
       { id: 'approvals', label: 'Approvals' },
+      { id: 'password', label: 'My Password' },
+      { id: 'company_setup', label: 'Company Setup & Controls', ownerOnly: true },
       { id: 'barcode_history', label: 'Barcode History' },
       { id: 'audit_trail', label: 'Audit Trail' }
     ]
@@ -28,16 +30,19 @@ export const NAV: NavGroup[] = [
       { id: 'units', label: 'Unit Master' },
       { id: 'widths', label: 'Width Master' },
       { id: 'racks', label: 'Rack Master' },
-      { id: 'bank-accounts', label: 'Bank Accounts' }
+      { id: 'bank-accounts', label: 'Bank Accounts' },
+      { id: 'users', label: 'People & Access', ownerOnly: true }
     ]
   },
   {
     label: 'Inventory',
     items: [
+      { id: 'purchase_orders', label: 'Grey Purchase Orders' },
       { id: 'sales_orders', label: 'Finish Sales Orders' },
       { id: 'grey_inward', label: 'Grey Inward (Barcoding)' },
       { id: 'dyeing_issue', label: 'Issue To Dyeing' },
       { id: 'dyeing_receipt', label: 'Receive From Dyeing' },
+      { id: 'reprocess', label: 'Dyeing Reprocess / Rework' },
       { id: 'grey_return', label: 'Grey Return To Weaver' },
       { id: 'dyeing_return', label: 'Dyeing Return To Process House' },
       { id: 'customer_return', label: 'Customer Return' },
@@ -47,13 +52,15 @@ export const NAV: NavGroup[] = [
       { id: 'stock_count', label: 'Physical Stock Count' },
       { id: 'delivery_challans', label: 'Delivery Challans (Rule 55)' },
       { id: 'labels', label: 'Barcode Labels' },
-      { id: 'dispatch', label: 'Dispatch' }
+      { id: 'dispatch', label: 'Dispatch' },
+      { id: 'packing_lists', label: 'Customer Packing Lists' }
     ]
   },
   {
     label: 'Accounts',
     items: [
       { id: 'payments', label: 'Receipts & Payments' },
+      { id: 'bank_reconciliation', label: 'Bank Reconciliation' },
       { id: 'sales_invoices', label: 'Tax Invoices' },
       { id: 'purchase_invoices', label: 'Purchase Invoices' },
       { id: 'gst_notes', label: 'Credit / Debit Notes' },
@@ -105,33 +112,46 @@ export const NAV: NavGroup[] = [
 interface Props {
   activeModule: string;
   onSelect: (id: string) => void;
+  role?: string;
 }
 
-export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect }) => {
+export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect, role }) => {
   const [open, setOpen] = useState<string | null>(null);
-  const activeGroup = NAV.find(g => g.items.some(i => i.id === activeModule));
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const groups = NAV.map(group => ({
+    ...group,
+    items: group.items.filter(item => !item.ownerOnly || role === 'owner')
+  })).filter(group => group.items.length > 0);
+  const activeGroup = groups.find(g => g.items.some(i => i.id === activeModule));
   const activeItem = activeGroup?.items.find(i => i.id === activeModule);
 
   const pick = (id: string) => {
     onSelect(id);
     setOpen(null);
+    setMobileOpen(false);
   };
 
   return (
-    <div
+    <nav aria-label="Primary modules"
       className="bg-[#cbd5e1] border-b border-[#94a3b8] px-3 py-1 flex items-center gap-1 text-xs relative"
       onMouseLeave={() => setOpen(null)}
     >
-      {NAV.map(group => {
+      <button type="button" className="erp-btn min-h-11 md:hidden" aria-expanded={mobileOpen}
+        aria-controls="mobile-module-menu" onClick={() => setMobileOpen(v => !v)}>
+        {mobileOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+        {mobileOpen ? 'Close menu' : 'Menu'}
+      </button>
+      <span className="md:hidden ml-2 font-bold text-blue-950 truncate">{activeItem?.label ?? activeModule}</span>
+      {groups.map(group => {
         const isActive = activeGroup?.label === group.label;
         return (
-          <div key={group.label} className="relative">
+          <div key={group.label} className="relative hidden md:block">
             <button
               onClick={() => setOpen(open === group.label ? null : group.label)}
               onMouseEnter={() => open && setOpen(group.label)}
-              className={`px-3 py-1 rounded font-semibold flex items-center gap-1 transition ${
+              className={`min-h-11 px-3 py-1 rounded font-semibold flex items-center gap-1 ${
                 isActive
-                  ? 'bg-blue-800 text-white'
+                  ? 'bg-blue-900 text-white'
                   : 'bg-white/80 text-slate-700 hover:bg-white border border-slate-300'
               }`}
             >
@@ -145,7 +165,7 @@ export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect }) => {
                   <button
                     key={item.id}
                     onClick={() => pick(item.id)}
-                    className={`block w-full text-left px-3 py-1.5 hover:bg-blue-50 ${
+                    className={`block min-h-11 w-full text-left px-3 py-1.5 hover:bg-blue-50 ${
                       item.id === activeModule ? 'bg-blue-100 font-bold text-blue-900' : 'text-slate-700'
                     }`}
                   >
@@ -158,12 +178,34 @@ export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect }) => {
         );
       })}
 
-      <div className="ml-auto flex items-center gap-2 text-[11px] font-mono font-bold text-blue-950">
+      <div className="ml-auto hidden md:flex items-center gap-2 text-[11px] font-mono font-bold text-blue-950">
         <span>Active:</span>
         <span className="bg-blue-100 text-blue-900 px-2 py-0.5 rounded border border-blue-300">
           {activeItem?.label ?? activeModule}
         </span>
       </div>
-    </div>
+      {mobileOpen && (
+        <div id="mobile-module-menu" className="absolute z-50 left-0 right-0 top-full bg-white border-b border-slate-400 shadow-xl max-h-[70dvh] overflow-y-auto p-3 md:hidden">
+          {groups.map(group => (
+            <section key={group.label} aria-labelledby={`mobile-${group.label}`} className="mb-3">
+              <h2 id={`mobile-${group.label}`} className="px-2 py-1 text-blue-950 font-bold uppercase tracking-wide">{group.label}</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                {group.items.map(item => (
+                  <button key={item.id} onClick={() => pick(item.id)}
+                    aria-current={item.id === activeModule ? 'page' : undefined}
+                    className={`min-h-11 rounded text-left px-3 py-2 border ${
+                      item.id === activeModule
+                        ? 'bg-blue-900 border-blue-950 text-white font-bold'
+                        : 'bg-slate-50 border-slate-200 text-slate-800'
+                    }`}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+    </nav>
   );
 };

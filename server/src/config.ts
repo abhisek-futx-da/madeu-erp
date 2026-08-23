@@ -50,7 +50,15 @@ export const boolSetting = (s: Map<string, unknown>, key: string, fallback = fal
   return typeof v === 'boolean' ? v : fallback;
 };
 
+export const stringSetting = <T extends string>(
+  s: Map<string, unknown>, key: string, allowed: readonly T[], fallback: T
+): T => {
+  const value = s.get(key);
+  return typeof value === 'string' && allowed.includes(value as T) ? value as T : fallback;
+};
+
 export interface BrokerageRule {
+  id: string;
   brokerId: string;
   basis: 'percent_of_value' | 'per_unit' | 'flat';
   rate: number;
@@ -63,7 +71,7 @@ export async function brokerageFor(
   if (!brokerId) return null;
   return one<BrokerageRule>(
     db,
-    `select broker_id as "brokerId", basis, rate
+    `select id, broker_id as "brokerId", basis, rate
        from brokerage_rule
       where broker_id = $1 and doc_type = $3
         and (party_id = $2 or party_id is null)
@@ -74,11 +82,30 @@ export async function brokerageFor(
 }
 
 export function brokerageAmount(rule: BrokerageRule, value: number, units: number): number {
+  const rate = Number(rule.rate);
   switch (rule.basis) {
-    case 'percent_of_value': return Math.round(value * rule.rate) / 100;
-    case 'per_unit': return Math.round(units * rule.rate * 100) / 100;
-    case 'flat': return Math.round(rule.rate * 100) / 100;
+    case 'percent_of_value': return Math.round(value * rate) / 100;
+    case 'per_unit': return Math.round(units * rate * 100) / 100;
+    case 'flat': return Math.round(rate * 100) / 100;
   }
+}
+
+/** Most specific valid commercial rate: quality-specific beats party-wide,
+ * then the newest effective date wins. A missing rate is explicit; callers
+ * must ask the operator instead of silently inventing zero. */
+export async function rateFor(
+  db: Db, partyId: string, qualityId: string, kind: 'purchase' | 'sales', onDate: string
+): Promise<{ id: string; rate: number } | null> {
+  const row = await one<{ id: string; rate: number }>(db,
+    `select id, rate
+       from rate_contract
+      where party_id=$1 and kind=$3
+        and (quality_id=$2 or quality_id is null)
+        and valid_from <= $4::date
+        and (valid_to is null or valid_to >= $4::date)
+      order by (quality_id is not null) desc, valid_from desc, id
+      limit 1`, [partyId, qualityId, kind, onDate]);
+  return row ? { id: row.id, rate: Number(row.rate) } : null;
 }
 
 /**

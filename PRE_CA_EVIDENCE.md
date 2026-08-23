@@ -6,7 +6,7 @@ the gated handover in `docs/CA_REVIEW_AND_MILL_PILOT.md`.
 
 This document serves as the definitive baseline evidence that Link ERP is mathematically sound, securely architected, and operationally safe for a controlled mill pilot with a real Indian textile converter.
 
-## What is Proven (The 68 Points)
+## What is Proven in Code
 
 ### 1. Ironclad Double-Entry Core
 No inventory moves without a corresponding accounting ledger posting.
@@ -22,14 +22,18 @@ Destructive or financially impactful workflows cannot be single-handedly execute
 ### 3. Godown / Mill Floor Resilience
 The UI assumes a hostile physical environment.
 - **Offline Queues:** Scanning pieces on `LiveGreyInwardView`, `DyeingReceiptView`, and `ScanDocumentView` intercepts dropped HTTP requests (`TypeError: Failed to fetch`). Un-synced scans are routed to `IndexedDB` and flushed automatically when Wi-Fi returns.
-- **Scale Bounds:** Barcode API payloads scale to 100,000+ pieces without truncation, allowing entire warehouse sweeps natively.
+- **Scale Bounds:** Stock lists are server-paged, and the volume gate measures
+  150,000 pieces plus 465,000 movements without loading an entire warehouse
+  into one browser response.
 
 ### 4. Security & Hardening
-- **Authentication:** Token revocations and brute-force IP throttling (600 RPM) are backed by the database.
+- **Authentication:** Token revocations and brute-force IP throttling (600 RPM)
+  are backed by the database. Signing keys carry IDs and support a bounded
+  previous-key rotation window.
 - **Role Scoping:** Every destructive API endpoint is protected by role-based Express middleware (e.g., `requireWrite('store')`, `requireWrite('accounts')`).
 - **Data Isolation (RLS Pattern):** Test suites aggressively ensure that tokens forged with an alternate `tenantId` cannot fetch rows from competing companies.
 
-## What Remains Unproven (The Remaining 32 Points)
+## What Remains Externally Unproven
 
 The following claims **are explicitly excluded** from this software release and require independent validation:
 
