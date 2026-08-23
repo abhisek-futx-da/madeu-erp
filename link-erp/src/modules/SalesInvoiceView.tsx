@@ -36,7 +36,7 @@ const SUPPLY_LABEL: Record<string, string> = {
 
 /** Tax invoices raised against dispatches, and their IRP readiness. */
 export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) => {
-  const invoices = usePagedList<InvoiceRow>('/sales-invoices');
+  const invoices = usePagedList<InvoiceRow>('/sales-invoices', 50, 'sales_invoices');
   const uninvoiced = useApi<Page<DispatchRow>>('/dispatches?uninvoiced=true&limit=100');
   const { submit, busy, error } = useSubmit<unknown, any>('/sales-invoices');
 

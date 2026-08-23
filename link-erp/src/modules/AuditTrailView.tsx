@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { useApi } from '../lib/useApi';
 import { STATUS_LABEL, type MovementRow, type PieceRow } from '../lib/api';
@@ -18,8 +18,21 @@ const stage = (v: string | null) => (v ? STATUS_LABEL[v] ?? v : '—');
  * screen: you could prove a piece's history in SQL and nowhere else.
  */
 export const AuditTrailView: React.FC = () => {
-  const [barcode, setBarcode] = useState('');
-  const [query, setQuery] = useState('');
+  const initial = () => {
+    const [module, params = ''] = window.location.hash.replace(/^#\/?/, '').split('?', 2);
+    return module === 'audit_trail' ? new URLSearchParams(params).get('q') ?? '' : '';
+  };
+  const [barcode, setBarcode] = useState(initial);
+  const [query, setQuery] = useState(initial);
+
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<{ module: string; query: string }>).detail;
+      if (detail?.module === 'audit_trail') { setBarcode(detail.query); setQuery(detail.query); }
+    };
+    window.addEventListener('erp-module-search', receive);
+    return () => window.removeEventListener('erp-module-search', receive);
+  }, []);
 
   const history = useApi<MovementRow[]>(
     query ? `/pieces/${encodeURIComponent(query)}/history` : null, [query]

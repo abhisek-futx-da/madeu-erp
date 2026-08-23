@@ -10,7 +10,7 @@ Modelled on the legacy Windows system a Bhiwandi mill runs today. Local design
 references and one-off repair artifacts are kept under `_local_archive/` and
 are deliberately excluded from the release source.
 
-- **Database** — Postgres 16, row-level security per tenant, 44 tracked
+- **Database** — Postgres 16, row-level security per tenant, 45 tracked
   migrations
 - **API** — Node 26 running TypeScript directly, Express 5, zod at every edge
 - **Web** — React 19, Vite, Tailwind, strict TypeScript
@@ -89,8 +89,8 @@ voucher's balance, and the piece cache against its append-only movement log.
 ## Tests
 
 ```bash
-cd server   && PGHOST=... PGPORT=... PGUSER=postgres npm test   # 307 tests
-cd link-erp && npm test                                         # 86 tests
+cd server   && PGHOST=... PGPORT=... PGUSER=postgres npm test   # 314 tests
+cd link-erp && npm test                                         # 91 tests
 
 # every step the CI workflow runs, here, against a real Postgres
 PGHOST=... PGPORT=... PGUSER=postgres ./scripts/ci-local.sh
@@ -100,7 +100,7 @@ cd link-erp/db && PGHOST=... PGPORT=... PGUSER=postgres ./load/run.sh
 ```
 
 `server/test/run.sh` **builds the database from scratch on every run**, applies
-the eighteen in-database invariants, starts the API on its own port, and then runs
+the twenty in-database invariants, starts the API on its own port, and then runs
 the suite. This matters: the suite used to run against one shared, accumulating
 database, and creating four documents by hand was enough to fail twenty of a
 hundred and thirty-one tests. A run is now repeatable or it is not a run.
@@ -123,6 +123,7 @@ What the suites cover:
 | `purchase-order` | supplier PO printing, receipt balance and cancellation dependencies |
 | `bank-reconciliation` | statement matching, unreconciled items and close controls |
 | `stockcount` | offline scan batches, six variance classes, second-person posting |
+| `onboarding-search` | owner-controlled master imports, atomic apply, tenant-wide linked search |
 | `mill-readiness` | kg/metre stock, kapat, realized brokerage, process-bill matching, Tally XML, PDF/WhatsApp outbox |
 | `concurrency` | two users clicking at once — see below |
 | `hardening` | forged/rotated tokens, database-backed throttling, oversized documents |
@@ -203,6 +204,14 @@ trusted to the screen.
 Marking a return filed (`POST /api/filings`) freezes the period: an invoice
 inside it can no longer be raised or cancelled, so a filed GSTR-1 cannot change
 behind the department's back. Only the owner can unlock one.
+
+The owner onboarding workbench imports seven master types from
+Excel-compatible CSV: ledgers, qualities, HSN/SAC codes, grades, units, widths,
+and racks. Every file is previewed and cross-checked before an atomic apply;
+rejected rows and immutable batch history remain downloadable. This is master
+data onboarding, not an opening-balance or opening-stock conversion. Global
+operational search links matching pieces, parties, orders, dispatches,
+invoices, payments, GST notes, and e-way bills back to their exact screens.
 
 ---
 

@@ -13,6 +13,7 @@ export const NAV: NavGroup[] = [
     label: 'Home',
     items: [
       { id: 'dashboard', label: 'Dashboard' },
+      { id: 'global_search', label: 'Global Search' },
       { id: 'approvals', label: 'Approvals' },
       { id: 'password', label: 'My Password' },
       { id: 'company_setup', label: 'Company Setup & Controls', ownerOnly: true },
@@ -31,7 +32,8 @@ export const NAV: NavGroup[] = [
       { id: 'widths', label: 'Width Master' },
       { id: 'racks', label: 'Rack Master' },
       { id: 'bank-accounts', label: 'Bank Accounts' },
-      { id: 'users', label: 'People & Access', ownerOnly: true }
+      { id: 'users', label: 'People & Access', ownerOnly: true },
+      { id: 'data_onboarding', label: 'Data Migration & Onboarding', ownerOnly: true }
     ]
   },
   {

@@ -30,7 +30,7 @@ export const PurchaseInvoiceView: React.FC = () => {
 
   const ledgers = useApi<LedgerRow[]>('/ledgers');
   const hsn = useApi<HsnRow[]>('/hsn-codes');
-  const invoices = usePagedList<PurchaseRow>('/purchase-invoices');
+  const invoices = usePagedList<PurchaseRow>('/purchase-invoices', 50, 'purchase_invoices');
   const { submit, busy, error } = useSubmit<unknown, any>('/purchase-invoices');
 
   const addLine = () => {

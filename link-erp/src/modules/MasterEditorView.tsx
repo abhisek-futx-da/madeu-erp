@@ -165,7 +165,11 @@ export const MASTERS: Record<string, MasterSpec> = {
 export const MasterEditorView: React.FC<{ master: keyof typeof MASTERS }> = ({ master }) => {
   const spec = MASTERS[master]!;
   const [form, setForm] = useState<Record<string, any>>(spec.blank);
-  const [search, setSearch] = useState('');
+  const searchFromHash = () => {
+    const [module, query = ''] = window.location.hash.replace(/^#\/?/, '').split('?', 2);
+    return module === master ? new URLSearchParams(query).get('q') ?? '' : '';
+  };
+  const [search, setSearch] = useState(searchFromHash);
   const [notice, setNotice] = useState<string | null>(null);
 
   const list = useApi<any[]>(`${spec.path}?q=${encodeURIComponent(search)}`, [search]);
@@ -174,8 +178,17 @@ export const MasterEditorView: React.FC<{ master: keyof typeof MASTERS }> = ({ m
   // Switching masters must not leave the previous master's fields in the form.
   useEffect(() => {
     setForm(spec.blank);
-    setSearch('');
+    setSearch(searchFromHash());
     setNotice(null);
+  }, [master]);
+
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<{ module: string; query: string }>).detail;
+      if (detail?.module === master) setSearch(detail.query);
+    };
+    window.addEventListener('erp-module-search', receive);
+    return () => window.removeEventListener('erp-module-search', receive);
   }, [master]);
 
   const refFrom = [...new Set(spec.fields.filter(f => f.type === 'ref').map(f => f.from!))];

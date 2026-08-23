@@ -267,6 +267,41 @@ do $$ begin
   end;
 end $$;
 
+-- 19. a staged migration row is immutable evidence
+insert into data_import
+  (id,tenant_id,resource,filename,total_rows,valid_rows,error_rows,created_by)
+select '19191919-0000-0000-0000-000000000001','eeeeeeee-1111-1111-1111-111111111111',
+       'grades','grades.csv',1,1,0,id
+  from app_user order by created_at limit 1;
+insert into data_import_row
+  (tenant_id,import_id,row_no,raw_data,normalized_data,action)
+values
+  ('eeeeeeee-1111-1111-1111-111111111111','19191919-0000-0000-0000-000000000001',2,
+   '{"code":"A","name":"First"}','{"code":"A","name":"First","sort_order":1}','insert');
+do $$ begin
+  begin
+    update data_import_row set normalized_data='{"code":"B"}' where import_id='19191919-0000-0000-0000-000000000001';
+    raise exception 'FAIL 19: an import preview row was rewritten';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL 19%' then raise; end if;
+    raise notice 'PASS 19 import preview rows are append-only evidence';
+  end;
+end $$;
+
+-- 20. an import containing rejected rows cannot be marked applied
+do $$ declare uid uuid; begin
+  select id into uid from app_user order by created_at limit 1;
+  begin
+    insert into data_import
+      (tenant_id,resource,filename,status,total_rows,valid_rows,error_rows,created_by,applied_at)
+    values
+      ('eeeeeeee-1111-1111-1111-111111111111','grades','bad.csv','applied',1,0,1,uid,now());
+    raise exception 'FAIL 20: a rejected batch was marked applied';
+  exception when check_violation then
+    raise notice 'PASS 20 rejected rows prevent an applied import';
+  end;
+end $$;
+
 -- 10. tenant isolation actually filters
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'tenant_app') then

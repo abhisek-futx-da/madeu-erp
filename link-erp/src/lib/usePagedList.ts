@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Page } from './api';
 import { useApi } from './useApi';
 
@@ -7,8 +7,15 @@ import { useApi } from './useApi';
  * used to render whatever the first 200 rows happened to be, with no filter
  * and no way past them.
  */
-export function usePagedList<T>(basePath: string, pageSize = 50) {
-  const [q, setQ] = useState('');
+function hashQuery(moduleId?: string) {
+  if (!moduleId) return '';
+  const raw = window.location.hash.replace(/^#\/?/, '');
+  const [module, query = ''] = raw.split('?', 2);
+  return module === moduleId ? new URLSearchParams(query).get('q') ?? '' : '';
+}
+
+export function usePagedList<T>(basePath: string, pageSize = 50, moduleId?: string) {
+  const [q, setQ] = useState(() => hashQuery(moduleId));
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [offset, setOffset] = useState(0);
@@ -31,6 +38,19 @@ export function usePagedList<T>(basePath: string, pageSize = 50) {
   const setFromDate = useCallback((v: string) => { setFrom(v); setOffset(0); }, []);
   const setToDate = useCallback((v: string) => { setTo(v); setOffset(0); }, []);
   const clear = useCallback(() => { setQ(''); setFrom(''); setTo(''); setOffset(0); }, []);
+
+  useEffect(() => {
+    if (!moduleId) return;
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<{ module: string; query: string }>).detail;
+      if (detail?.module === moduleId) {
+        setQ(detail.query);
+        setOffset(0);
+      }
+    };
+    window.addEventListener('erp-module-search', receive);
+    return () => window.removeEventListener('erp-module-search', receive);
+  }, [moduleId]);
 
   const exportCsv = useCallback(() => {
     const p = new URLSearchParams(query);

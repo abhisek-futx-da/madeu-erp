@@ -36,6 +36,8 @@ import { PurchaseOrderView } from './modules/PurchaseOrderView';
 import { ReprocessView } from './modules/ReprocessView';
 import { PackingListView } from './modules/PackingListView';
 import { MillIntegrationView } from './modules/MillIntegrationView';
+import { OnboardingView } from './modules/OnboardingView';
+import { GlobalSearchView } from './modules/GlobalSearchView';
 
 import { auth, type Session } from './lib/api';
 import { clearApiCache } from './lib/useApi';
@@ -46,7 +48,7 @@ export const App: React.FC = () => {
   const [checking, setChecking] = useState(true);
   const validModules = useMemo(() => new Set(NAV.flatMap(group => group.items.map(item => item.id))), []);
   const moduleFromUrl = () => {
-    const requested = window.location.hash.replace(/^#\/?/, '');
+    const requested = window.location.hash.replace(/^#\/?/, '').split('?', 1)[0]!;
     return validModules.has(requested) ? requested : 'dashboard';
   };
   const [activeModule, setActiveModule] = useState<string>(() => moduleFromUrl());
@@ -67,13 +69,17 @@ export const App: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const navigate = (module: string) => {
+  const navigate = (module: string, query?: string) => {
     if (!validModules.has(module)) return;
     setOpenModules(current => current.includes(module)
       ? current
       : [...current.slice(-7), module]);
-    if (module !== activeModule) window.history.pushState(null, '', `#/${module}`);
+    const target = `#/${module}${query ? `?q=${encodeURIComponent(query)}` : ''}`;
+    window.history.pushState(null, '', target);
     setActiveModule(module);
+    if (query) queueMicrotask(() => window.dispatchEvent(new CustomEvent('erp-module-search', {
+      detail: { module, query }
+    })));
   };
 
   useEffect(() => {
@@ -136,6 +142,7 @@ export const App: React.FC = () => {
     <>
       {module in MASTERS && <MasterEditorView master={module as keyof typeof MASTERS} />}
       {module === 'dashboard' && <DashboardView onOpen={navigate} />}
+      {module === 'global_search' && <GlobalSearchView onOpen={navigate} />}
       {module === 'approvals' && <ApprovalView session={session} />}
       {module === 'password' && <PasswordView />}
       {module === 'users' && <UserAdminView session={session} />}
@@ -163,6 +170,7 @@ export const App: React.FC = () => {
       {module === 'year_close' && <YearCloseView />}
       {module === 'payments' && <PaymentView />}
       {module === 'mill_integrations' && <MillIntegrationView />}
+      {module === 'data_onboarding' && <OnboardingView />}
       {module === 'bank_reconciliation' && <BankReconciliationView session={session} />}
       {module === 'audit_trail' && <AuditTrailView />}
       {module === 'labels' && <BarcodeLabelView session={session} />}
