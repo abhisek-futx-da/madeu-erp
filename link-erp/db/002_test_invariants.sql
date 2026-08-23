@@ -193,6 +193,80 @@ do $$ declare n int; v numeric; r text; begin
   raise notice 'PASS 14 variance survived UPDATE and DELETE, still Rs %', v;
 end $$;
 
+-- 15. a kilogram-priced inward values the actual net weight, not its metres
+insert into grey_inward (id, tenant_id, entry_no, entry_date, party_id, challan_no, challan_date, status) values
+  ('15151515-0000-0000-0000-000000000001','eeeeeeee-1111-1111-1111-111111111111','GIN-KG-1','2026-08-21',
+   '33333333-0000-0000-0000-000000000001','KG-1','2026-08-21','approved');
+insert into piece (id, tenant_id, barcode, quality_id, grade_code, lot_no, grey_qty, current_qty) values
+  ('15151515-0000-0000-0000-000000000002','eeeeeeee-1111-1111-1111-111111111111','KGVALUED001',
+   'eeee4444-0000-0000-0000-000000000001','LUMP','KG-LOT',100,100);
+insert into grey_inward_line
+  (tenant_id,inward_id,piece_id,sno,received_qty,checked_qty,rate,rate_uom,gross_weight_kg,tare_weight_kg,net_weight_kg)
+values
+  ('eeeeeeee-1111-1111-1111-111111111111','15151515-0000-0000-0000-000000000001',
+   '15151515-0000-0000-0000-000000000002',1,100,100,30,'KGS',15.5,0.5,15);
+do $$ declare a numeric; begin
+  select amount into a from grey_inward_line where piece_id='15151515-0000-0000-0000-000000000002';
+  if a <> 450 then raise exception 'FAIL 15: kg valuation used the wrong base (%)', a; end if;
+  raise notice 'PASS 15 kilogram rate valued 15 kg at Rs 450, independent of metres';
+end $$;
+
+-- 16. a kilogram rate cannot silently fall back to a missing weight
+insert into piece (id, tenant_id, barcode, quality_id, grade_code, lot_no, grey_qty, current_qty) values
+  ('16161616-0000-0000-0000-000000000001','eeeeeeee-1111-1111-1111-111111111111','KGMISSING001',
+   'eeee4444-0000-0000-0000-000000000001','LUMP','KG-LOT',100,100);
+do $$ begin
+  begin
+    insert into grey_inward_line
+      (tenant_id,inward_id,piece_id,sno,received_qty,checked_qty,rate,rate_uom)
+    values
+      ('eeeeeeee-1111-1111-1111-111111111111','15151515-0000-0000-0000-000000000001',
+       '16161616-0000-0000-0000-000000000001',2,100,100,30,'KGS');
+    raise exception 'FAIL 16: kg-priced inward without a weight was accepted';
+  exception when check_violation then
+    raise notice 'PASS 16 kilogram rate without positive net weight refused';
+  end;
+end $$;
+
+-- 17. the movement spine advances the weight cache with the metre cache
+insert into piece_movement
+  (tenant_id,piece_id,event,from_status,to_status,qty_before,qty_after,
+   weight_before_kg,weight_after_kg,counterparty_id,doc_type,doc_id)
+values
+  ('eeeeeeee-1111-1111-1111-111111111111','15151515-0000-0000-0000-000000000002',
+   'issue','grey_in_stock','issued_to_dyeing',100,100,15,15,
+   '33333333-0000-0000-0000-000000000002','dyeing_issue',gen_random_uuid());
+do $$ declare w numeric; begin
+  select current_weight_kg into w from piece where id='15151515-0000-0000-0000-000000000002';
+  if w <> 15 then raise exception 'FAIL 17: piece weight cache is %', w; end if;
+  raise notice 'PASS 17 movement spine advanced the parallel kilogram cache';
+end $$;
+
+-- 18. consolidated process bills cannot allocate more than actually returned
+insert into process_house_bill
+  (id,tenant_id,process_house_id,supplier_bill_no,bill_date,billed_metres,billed_amount)
+values
+  ('18181818-0000-0000-0000-000000000001','eeeeeeee-1111-1111-1111-111111111111',
+   '33333333-0000-0000-0000-000000000002','PH-1','2026-08-21',100,1800),
+  ('18181818-0000-0000-0000-000000000002','eeeeeeee-1111-1111-1111-111111111111',
+   '33333333-0000-0000-0000-000000000002','PH-2','2026-08-21',13,234);
+insert into process_house_bill_allocation
+  (tenant_id,bill_id,receipt_line_id,allocated_metres,allocated_amount)
+select 'eeeeeeee-1111-1111-1111-111111111111','18181818-0000-0000-0000-000000000001',id,100,1800
+from dyeing_receipt_line where receipt_id='99999999-0000-0000-0000-000000000001';
+do $$ begin
+  begin
+    insert into process_house_bill_allocation
+      (tenant_id,bill_id,receipt_line_id,allocated_metres,allocated_amount)
+    select 'eeeeeeee-1111-1111-1111-111111111111','18181818-0000-0000-0000-000000000002',id,13,234
+    from dyeing_receipt_line where receipt_id='99999999-0000-0000-0000-000000000001';
+    raise exception 'FAIL 18: process bill over-allocated a receipt';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL 18%' then raise; end if;
+    raise notice 'PASS 18 process-house billing cannot exceed the actual receipt';
+  end;
+end $$;
+
 -- 10. tenant isolation actually filters
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'tenant_app') then

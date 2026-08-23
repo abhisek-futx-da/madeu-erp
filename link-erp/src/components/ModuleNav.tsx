@@ -61,6 +61,7 @@ export const NAV: NavGroup[] = [
     items: [
       { id: 'payments', label: 'Receipts & Payments' },
       { id: 'bank_reconciliation', label: 'Bank Reconciliation' },
+      { id: 'mill_integrations', label: 'Mill Integrations & Tally' },
       { id: 'sales_invoices', label: 'Tax Invoices' },
       { id: 'purchase_invoices', label: 'Purchase Invoices' },
       { id: 'gst_notes', label: 'Credit / Debit Notes' },

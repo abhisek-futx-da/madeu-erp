@@ -7,7 +7,9 @@ import { documentRouter } from './document-routes.ts';
 import { resourceRouter } from './resources.ts';
 import { postCutPack, type Ctx } from './domain.ts';
 import { deductionFor, recordDeduction, closeFinancialYear, reopenFinancialYear } from './tds.ts';
-import { recordPayment, suggestAllocation, cancelPayment } from './payments.ts';
+import {
+  recordPayment, suggestAllocation, cancelPayment, releaseBrokerageForPayment, forfeitBrokerage
+} from './payments.ts';
 import { postGreyReturn, postDyeingReturn, applyGreyReturn, applyDyeingReturn, applyCustomerReturn, postCustomerReturn } from './returns.ts';
 import { postWriteOff, applyWriteOff } from './writeoff.ts';
 import { cancelDocument } from './cancellation.ts';
@@ -25,6 +27,7 @@ import {
   matchStatementLine, unmatchStatementLine, completeReconciliation, cancelReconciliation
 } from './bank-reconciliation.ts';
 import { applyReprocessReceipt } from './reprocess.ts';
+import { millReadinessRouter } from './mill-readiness.ts';
 
 const uuid = z.string().uuid();
 const money = z.coerce.number().finite();
@@ -53,6 +56,7 @@ export function buildRoutes() {
   api.use(requireAuth);
   api.use('/configuration', configurationRouter());
   api.use(identityRouter());
+  api.use(millReadinessRouter());
 
   // ------------------------------------------------------------- documents --
 
@@ -256,6 +260,14 @@ export function buildRoutes() {
     purchaseInvoiceId: uuid.nullish(),
     amount: money.positive()
   });
+  const paymentDeduction = z.object({
+    salesInvoiceId: uuid.nullish(),
+    purchaseInvoiceId: uuid.nullish(),
+    kind: z.enum(['cash_discount', 'quality_discount', 'rate_difference', 'shortage', 'tds', 'other']),
+    amount: money.positive(),
+    reason: z.string().trim().min(2).max(300),
+    taxTreatment: z.enum(['none', 'credit_note_required', 'debit_note_required']).default('none')
+  });
 
   api.post('/payments', requireWrite('accounts'), async (req, res, next) => {
     try {
@@ -270,7 +282,8 @@ export function buildRoutes() {
         instrumentDate: isoDate.nullish(),
         bankLedgerId: uuid.nullish(),
         narration: z.string().max(300).default(''),
-        allocations: z.array(allocation).max(MAX_DOC_LINES).default([])
+        allocations: z.array(allocation).max(MAX_DOC_LINES).default([]),
+        deductions: z.array(paymentDeduction).max(MAX_DOC_LINES).default([])
       }).parse(req.body);
       const out = await withCtx(req, ctx => recordPayment(ctx, body));
       res.status(201).json(out);
@@ -310,6 +323,15 @@ export function buildRoutes() {
       const body = z.object({ reason: z.string().min(1).max(200) }).parse(req.body);
       const out = await withCtx(req, ctx => cancelPayment(ctx, id, body.reason));
       res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  api.post('/sales-invoices/:id/brokerage/forfeit', requireWrite('owner'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const body = z.object({ reason: z.string().trim().min(3).max(200),
+        forfeitDate: isoDate.optional() }).parse(req.body);
+      res.json(await withCtx(req, ctx => forfeitBrokerage(ctx, id, body.reason, body.forfeitDate)));
     } catch (e) { next(e); }
   });
 
@@ -474,7 +496,8 @@ export function buildRoutes() {
           { db, tenantId, userId, fy: fyLabel(), role }, kind, id, body.note,
           // A stock count moves pieces as well as rupees, and both happen in
           // this one transaction or neither does.
-          kind === 'stock_count' ? ctx => applyStockCount(ctx, id).then(() => undefined)
+          kind === 'payment' ? ctx => releaseBrokerageForPayment(ctx, id).then(() => undefined)
+            : kind === 'stock_count' ? ctx => applyStockCount(ctx, id).then(() => undefined)
             : kind === 'grey_return' ? ctx => applyGreyReturn(ctx, id)
             : kind === 'dyeing_return' ? ctx => applyDyeingReturn(ctx, id)
             : kind === 'customer_return' ? ctx => applyCustomerReturn(ctx, id).then(() => undefined)
@@ -752,7 +775,12 @@ export function buildRoutes() {
       const rows = await withTenant(tenantId, userId, db =>
         many(db,
           `select p.id, p.barcode, p.status, p.lot_no, p.grade_code, p.uom, p.rack_code,
-                  p.grey_qty, p.finish_qty, p.current_qty,
+                  p.grey_qty, p.finish_qty, p.current_qty, p.grey_weight_kg,
+                  p.finish_weight_kg, p.current_weight_kg, q.width_cms,
+                  case when p.current_qty > 0 and p.current_weight_kg is not null
+                       then round(p.current_weight_kg*1000/p.current_qty,3) end as glm,
+                  case when p.current_qty > 0 and p.current_weight_kg is not null and q.width_cms > 0
+                       then round(p.current_weight_kg*100000/(p.current_qty*q.width_cms),3) end as gsm,
                   p.grey_cost + p.jobwork_cost + p.other_cost as cost,
                   q.name as quality, d.name as design, l.name as held_by
              from piece p

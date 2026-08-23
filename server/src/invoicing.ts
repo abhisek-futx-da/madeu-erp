@@ -32,7 +32,8 @@ async function roles(ctx: Ctx) {
     sgstOutput: need('sgst_output'),
     igstOutput: need('igst_output'),
     roundOff: need('round_off'),
-    brokerageExpense: map.get('brokerage_expense') ?? null
+    brokerageExpense: map.get('brokerage_expense') ?? null,
+    brokerageAccrued: map.get('brokerage_accrued') ?? null
   };
 }
 
@@ -156,14 +157,15 @@ export async function raiseInvoiceForDispatch(
     ctx.db,
     `insert into sales_invoice (tenant_id, invoice_no, invoice_date, party_id, dispatch_id,
        place_of_supply, supply_type, taxable_value, cgst_amount, sgst_amount, igst_amount,
-       round_off, invoice_total, broker_id, brokerage_rule_id, brokerage_amount, status, created_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$18,$17) returning id`,
+       round_off, invoice_total, broker_id, brokerage_rule_id, brokerage_amount,
+       brokerage_state, status, created_by)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$19,$18,$17) returning id`,
     [ctx.tenantId, invoiceNo, invoiceDate, head.party_id, dispatchId, placeOfSupply,
      computed.supplyType, computed.taxableValue, computed.cgstAmount, computed.sgstAmount,
      computed.igstAmount, computed.roundOff, computed.invoiceTotal,
      brokerage > 0 ? brokerId : null, brokerage > 0 ? brokerageRule?.id : null, brokerage,
      ctx.userId,
-     approval ? 'pending_approval' : 'approved']
+     approval ? 'pending_approval' : 'approved', brokerage > 0 ? 'accrued' : 'none']
   );
   if (!inv) throw new Error('invoice insert returned nothing');
 
@@ -207,12 +209,12 @@ export async function raiseInvoiceForDispatch(
   const ledgers = { ...led, party: head.party_id };
   const postings: Posting[] = invoicePostingLines(computed, ledgers);
   if (brokerage > 0) {
-    if (!brokerId || !led.brokerageExpense) {
-      throw new Error('brokerage is due but its broker or expense posting role is not configured');
+    if (!brokerId || !led.brokerageExpense || !led.brokerageAccrued) {
+      throw new Error('brokerage is due but its broker, expense or accrued posting role is not configured');
     }
     postings.push(
       { ledgerId: led.brokerageExpense, debit: brokerage },
-      { ledgerId: brokerId, credit: brokerage }
+      { ledgerId: led.brokerageAccrued, credit: brokerage }
     );
   }
 

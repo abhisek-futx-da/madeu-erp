@@ -64,6 +64,7 @@ const CONTROL_ACCOUNTS: ControlSpec[] = [
   { code: '15', name: 'Current Assets - Stock', subControl: 'Inventory', nature: 'current_asset' },
   { code: '16', name: 'Bank Accounts', subControl: 'Bank', nature: 'bank' },
   { code: '17', name: 'Cash in Hand', subControl: 'Cash', nature: 'cash' },
+  { code: '18', name: 'Current Tax Assets', subControl: 'Current Assets', nature: 'current_asset' },
   { code: '20', name: 'Creditors for Transport', subControl: 'Sundry Creditors', nature: 'sundry_creditor_transport' },
   { code: '30', name: 'Creditors for Process', subControl: 'Sundry Creditors', nature: 'sundry_creditor_process' },
   { code: '40', name: 'Creditors for Grey', subControl: 'Sundry Creditors', nature: 'sundry_creditor_grey' },
@@ -97,7 +98,7 @@ const LEDGERS: LedgerSpec[] = [
   { code: '922', name: 'Input IGST', controlCode: '82', postingRole: 'igst_input' },
   { code: '930', name: 'Rounding Off', controlCode: '95', postingRole: 'round_off' },
   { code: '931', name: 'RCM Liability', controlCode: '81', postingRole: 'rcm_liability' },
-  { code: '940', name: 'TDS Payable', controlCode: '80' },
+  { code: '940', name: 'TDS Payable', controlCode: '80', postingRole: 'tds_payable' },
   { code: '950', name: 'Retained Earnings', controlCode: '99', postingRole: 'retained_earnings' },
   { code: '960', name: 'Grey Stock', controlCode: '15', postingRole: 'inventory_grey' },
   { code: '961', name: 'Finish Stock', controlCode: '15', postingRole: 'inventory_finish' },
@@ -107,7 +108,12 @@ const LEDGERS: LedgerSpec[] = [
   { code: '970', name: 'Cash in Hand', controlCode: '17', postingRole: 'cash' },
   { code: '980', name: 'Discount Allowed', controlCode: '93', postingRole: 'discount_allowed' },
   { code: '981', name: 'Discount Received', controlCode: '94', postingRole: 'discount_received' },
-  { code: '982', name: 'Brokerage Expense', controlCode: '98', postingRole: 'brokerage_expense' }
+  { code: '982', name: 'Brokerage Expense', controlCode: '98', postingRole: 'brokerage_expense' },
+  { code: '984', name: 'Quality / Shade Deductions', controlCode: '93', postingRole: 'quality_deduction' },
+  { code: '985', name: 'Rate Difference', controlCode: '93', postingRole: 'rate_difference' },
+  { code: '986', name: 'Shortage Claims', controlCode: '93', postingRole: 'shortage_claim' },
+  { code: '987', name: 'Brokerage Accrued — Not Yet Payable', controlCode: '10', postingRole: 'brokerage_accrued' },
+  { code: '988', name: 'TDS Receivable', controlCode: '18', postingRole: 'tds_receivable' }
 ];
 
 const DOCUMENT_SERIES: Array<[string, string]> = [

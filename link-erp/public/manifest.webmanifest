@@ -1,0 +1,19 @@
+{
+  "name": "Link ERP — Textile Mill Operations",
+  "short_name": "Link ERP",
+  "description": "Piece-level textile inventory, processing, accounts and GST operations.",
+  "start_url": "/#/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#dce5f0",
+  "theme_color": "#1e3a8a",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/erp-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

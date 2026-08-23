@@ -10,7 +10,7 @@ Modelled on the legacy Windows system a Bhiwandi mill runs today. Local design
 references and one-off repair artifacts are kept under `_local_archive/` and
 are deliberately excluded from the release source.
 
-- **Database** — Postgres 16, row-level security per tenant, 40 tracked
+- **Database** — Postgres 16, row-level security per tenant, 44 tracked
   migrations
 - **API** — Node 26 running TypeScript directly, Express 5, zod at every edge
 - **Web** — React 19, Vite, Tailwind, strict TypeScript
@@ -89,8 +89,8 @@ voucher's balance, and the piece cache against its append-only movement log.
 ## Tests
 
 ```bash
-cd server   && PGHOST=... PGPORT=... PGUSER=postgres npm test   # 292 tests
-cd link-erp && npm test                                         # 81 tests
+cd server   && PGHOST=... PGPORT=... PGUSER=postgres npm test   # 307 tests
+cd link-erp && npm test                                         # 86 tests
 
 # every step the CI workflow runs, here, against a real Postgres
 PGHOST=... PGPORT=... PGUSER=postgres ./scripts/ci-local.sh
@@ -100,7 +100,7 @@ cd link-erp/db && PGHOST=... PGPORT=... PGUSER=postgres ./load/run.sh
 ```
 
 `server/test/run.sh` **builds the database from scratch on every run**, applies
-the fourteen in-database invariants, starts the API on its own port, and then runs
+the eighteen in-database invariants, starts the API on its own port, and then runs
 the suite. This matters: the suite used to run against one shared, accumulating
 database, and creating four documents by hand was enough to fail twenty of a
 hundred and thirty-one tests. A run is now repeatable or it is not a run.
@@ -123,6 +123,7 @@ What the suites cover:
 | `purchase-order` | supplier PO printing, receipt balance and cancellation dependencies |
 | `bank-reconciliation` | statement matching, unreconciled items and close controls |
 | `stockcount` | offline scan batches, six variance classes, second-person posting |
+| `mill-readiness` | kg/metre stock, kapat, realized brokerage, process-bill matching, Tally XML, PDF/WhatsApp outbox |
 | `concurrency` | two users clicking at once — see below |
 | `hardening` | forged/rotated tokens, database-backed throttling, oversized documents |
 | `db-parser` | unsafe numeric/int8 values are refused before JavaScript can round them |
@@ -196,6 +197,8 @@ trusted to the screen.
 | GSTR-1 B2B and HSN, GSTR-3B outward, GSTR-2B reconciliation | GST |
 | Profit & loss, balance sheet, trial balance | Accounts |
 | TDS 194Q / 194C deduction and summary | Accounts |
+| Tally Prime ledger/voucher XML | Mill Integration |
+| Invoice + LR/packing PDF and outstanding-statement PDF | Tax Invoices / Mill Integration |
 
 Marking a return filed (`POST /api/filings`) freezes the period: an invoice
 inside it can no longer be raised or cancelled, so a filed GSTR-1 cannot change
@@ -222,6 +225,21 @@ These are real and deliberate, not oversights:
   remains a CA decision rather than a guessed posting.
 - **No CA has audited the books and no mill has run a day's work through it.**
   That remains the only measurement that counts.
+- **No physical printer/scale combination is proven.** The loopback bridge,
+  raw ZPL/TSPL validation, network/CUPS printer paths, and serial/TCP scale
+  capture are tested in code; label calibration, scale protocol, dust, power,
+  and operator speed must pass on the pilot's actual hardware.
+- **No live WhatsApp template/provider round trip is proven.** The outbox is
+  idempotent, retries with backoff, attaches invoice/packing or outstanding
+  PDFs, supports buyer/broker copies and payment reminders, and refuses to
+  pretend delivery when credentials are absent. Meta template approval,
+  consent, phone quality, and live delivery receipts remain external gates.
+- **Tally import is not yet accepted evidence.** The export contains ledger
+  masters and balanced posted vouchers, but it must be imported into a copy of
+  the mill's real Tally company and reconciled by the accountant/CA.
+- **Process-house reconciliation is internal, not a vendor portal.** Mixed and
+  partial receipts can be matched to a consolidated supplier bill without
+  FIFO guessing; a process house cannot yet log in and confirm its own balance.
 - **Cross-company staff invitations are deliberately absent.** An owner may
   create, disable, re-enable, role-change, and reset a worker for this company;
   an existing user from another company cannot be attached until an auditable
@@ -229,17 +247,18 @@ These are real and deliberate, not oversights:
 
 ## Measured, not assumed
 
-Built at a year's volume — 1.5 lakh pieces, 4.65 lakh movements, 210 MB — with
+Built at a year's volume — 1.5 lakh pieces, 4.65 lakh movements, 214 MB — with
 `link-erp/db/load/run.sh`, which fails the build if any of these regresses:
 
 | | measured | budget |
 |---|---|---|
-| Barcode lookup, the query the floor runs all day | 4.7 ms | 50 ms |
-| One piece's whole history | 34.2 ms | 100 ms |
-| Invoice list, page 40 (the deep offset) | 4.0 ms | 250 ms |
-| Trial balance | 23.5 ms | 500 ms |
-| Balance sheet | 51.6 ms | 800 ms |
-| Owner's dashboard, all fourteen figures | 265.3 ms | 1500 ms |
-| Spine-drift check across every piece | 1524.0 ms | 2000 ms |
+| Barcode lookup, the query the floor runs all day | 3.9 ms | 50 ms |
+| One piece's whole history | 40.5 ms | 100 ms |
+| Invoice list, page 40 (the deep offset) | 6.0 ms | 250 ms |
+| Pieces by status after the RLS-specific index fix | 23.0 ms | 300 ms |
+| Trial balance | 36.9 ms | 500 ms |
+| Balance sheet | 75.8 ms | 800 ms |
+| Owner's dashboard, all fourteen figures | 273.8 ms | 1500 ms |
+| Spine-drift check across every piece | 968.5 ms | 2000 ms |
 
-Every one is index-driven; the plans are in `load/measure.sql`.
+All defined waits are under budget; the plans are in `load/measure.sql`.

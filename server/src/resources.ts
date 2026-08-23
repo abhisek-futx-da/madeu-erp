@@ -32,9 +32,9 @@ const RESOURCES: Record<string, Resource> = {
     columns: [
       'code', 'name', 'alias', 'control_account_id', 'broker_id', 'transport_id',
       'gstin', 'pan', 'gst_reg_type', 'is_msme', 'msme_ref_no', 'auto_tds_tcs',
-      'rcm_applicable', 'credit_days', 'credit_limit', 'is_active'
+      'rcm_applicable', 'credit_days', 'credit_limit', 'mobile_e164', 'is_active'
     ],
-    orderBy: 'name', area: 'masters', search: ['code', 'name', 'alias', 'gstin'],
+    orderBy: 'name', area: 'masters', search: ['code', 'name', 'alias', 'gstin', 'mobile_e164'],
     conflict: ['tenant_id', 'code'], hasId: true
   },
   qualities: {

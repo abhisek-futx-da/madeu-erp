@@ -224,16 +224,16 @@ export function documentRouter() {
     search: ['rp.issue_no', 'rp.challan_no', 'rp.reason', 'ph.name'],
     dateColumn: 'rp.issue_date',
     orderBy: 'rp.issue_date desc, rp.issue_no desc'
-  }, `select rl.reprocess_id as order_id, rl.id, rl.sno, rl.issued_qty,
+  }, `select rl.reprocess_id as order_id, rl.id, rl.sno, rl.issued_qty,rl.issued_weight_kg,
              rl.original_grade, p.barcode, p.status::text, q.name as quality,
-             active.receipt_no, active.receipt_status, active.received_qty,
+             active.receipt_no, active.receipt_status, active.received_qty,active.received_weight_kg,
              active.additional_rate, active.finish_grade
         from dyeing_reprocess_line rl
         join piece p on p.id = rl.piece_id
         join quality q on q.id = p.quality_id
         left join lateral (
           select rr.receipt_no, rr.status::text as receipt_status,
-                 rrl.received_qty, rrl.additional_rate, rrl.finish_grade
+                 rrl.received_qty,rrl.received_weight_kg,rrl.additional_rate,rrl.finish_grade
             from dyeing_reprocess_receipt_line rrl
             join dyeing_reprocess_receipt rr on rr.id = rrl.receipt_id
            where rrl.reprocess_line_id = rl.id and rr.status not in ('rejected','cancelled')
@@ -252,6 +252,7 @@ export function documentRouter() {
         lines: z.array(z.object({
           barcode,
           receivedQty: qty.positive(),
+          receivedWeightKg: qty.nullish(),
           additionalRate: money.nonnegative(),
           finishGrade: z.string().min(1).max(20)
         })).min(1).max(MAX_DOC_LINES)
@@ -319,6 +320,10 @@ export function documentRouter() {
           receivedQty: qty,
           checkedQty: qty,
           rate: money.nonnegative(),
+          rateUom: z.enum(['MTR','KGS']).default('MTR'),
+          grossWeightKg: qty.nullish(),
+          tareWeightKg: qty.nullish(),
+          netWeightKg: qty.nullish(),
           rackCode: z.string().max(20).nullish()
         })).min(1).max(MAX_DOC_LINES)
       }).parse(req.body);
@@ -358,6 +363,7 @@ export function documentRouter() {
         lines: z.array(z.object({
           barcode: z.string().min(4).max(40),
           receivedQty: qty,
+          receivedWeightKg: qty.nullish(),
           finishGrade: z.string().min(1).max(20),
           jobRate: money.nonnegative().default(0)
         })).min(1).max(MAX_DOC_LINES)
@@ -493,7 +499,7 @@ export function documentRouter() {
                                   and e.status <> 'cancelled'`,
     select: `i.id, i.invoice_no, i.invoice_date, i.place_of_supply, i.supply_type,
              i.taxable_value, i.cgst_amount, i.sgst_amount, i.igst_amount,
-             i.party_id, i.round_off, i.invoice_total, i.brokerage_amount,
+             i.party_id, i.round_off, i.invoice_total, i.brokerage_amount, i.brokerage_state,
              i.status, p.name as party_name, p.gstin, b.name as broker_name,
              g.filing_status, g.irn, g.last_error, e.ewb_no, e.our_ref as ewb_ref`,
     search: ['i.invoice_no', 'p.name', 'p.gstin'],

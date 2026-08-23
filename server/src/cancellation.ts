@@ -78,6 +78,7 @@ export async function cancelDocument(ctx: Ctx, kind: Kind, id: string, reason: s
   // Downstream first: an invoiced dispatch cannot be pulled out from under it.
   await assertNothingDependsOnIt(ctx, kind, id, doc.label);
 
+  if (kind === 'sales_invoice') await reverseBrokerageForfeit(ctx, id, doc.label, reason);
   const reversedVouchers = await reverseVouchers(ctx, kind, id, doc.label, reason);
   // A maker-checker document has no posted voucher yet.  Cancelling it must
   // discard that held entry as well: otherwise an obsolete accounting entry
@@ -123,8 +124,15 @@ async function assertNothingDependsOnIt(ctx: Ctx, kind: Kind, id: string, label:
       message: 'cancel the tax invoice first'
     },
     sales_invoice: {
-      sql: `select note_no from gst_note where against_invoice_id = $1 and is_live(status) limit 1`,
-      message: 'cancel the credit or debit notes against it first'
+      sql: `select ref from (
+              select note_no as ref from gst_note
+               where against_invoice_id=$1 and is_live(status)
+              union all
+              select p.voucher_no as ref from payment_allocation a
+                join payment p on p.id=a.payment_id and p.status<>'cancelled'
+               where a.sales_invoice_id=$1
+            ) blockers limit 1`,
+      message: 'cancel the linked credit/debit note or receipt first'
     },
     grey_purchase_order: {
       sql: `select gi.entry_no from grey_inward_line gil
@@ -176,6 +184,25 @@ async function assertNothingDependsOnIt(ctx: Ctx, kind: Kind, id: string, label:
     const ref = Object.values(blocker)[0];
     throw new Error(`${label} cannot be cancelled: ${check.message} (${ref})`);
   }
+}
+
+async function reverseBrokerageForfeit(ctx: Ctx, invoiceId: string, label: string, reason: string) {
+  const invoice = await one<{ brokerage_forfeit_voucher_id: string; voucher_date: string }>(ctx.db,
+    `select i.brokerage_forfeit_voucher_id,v.voucher_date::text
+       from sales_invoice i join voucher v on v.id=i.brokerage_forfeit_voucher_id
+      where i.id=$1 and i.brokerage_state='forfeited' for update of i`, [invoiceId]);
+  if (!invoice) return;
+  const lines = await many<{ ledger_id: string; debit: number; credit: number }>(ctx.db,
+    'select ledger_id,debit,credit from voucher_line where voucher_id=$1',
+    [invoice.brokerage_forfeit_voucher_id]);
+  await postVoucher(ctx, 'journal', invoice.voucher_date,
+    `Reverse brokerage forfeiture before cancelling ${label}: ${reason}`,
+    'brokerage_forfeit_reversal', invoiceId,
+    lines.map(line => ({ ledgerId: line.ledger_id,
+      debit: Number(line.credit) || undefined, credit: Number(line.debit) || undefined })));
+  await ctx.db.query(
+    `update sales_invoice set brokerage_state='accrued',brokerage_forfeit_voucher_id=null
+      where id=$1`, [invoiceId]);
 }
 
 /** A return-generated credit note has the return's exact source id.  Mark it

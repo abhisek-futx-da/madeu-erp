@@ -6,18 +6,35 @@ production IRP filing, or a CA opinion has been obtained.
 
 ## Code evidence available for review
 
-- Clean database rebuild from all migrations; 14 database invariants pass.
-- 292 server tests pass with no skips: piece traceability, double entry, stock valuation,
+- Clean database rebuild from 44 tracked migrations; 18 database invariants pass.
+- 307 server tests pass with no skips: piece traceability, double entry, stock valuation,
   payments, cancellation, tenant isolation, concurrency, GST calculations,
   e-invoice/e-way payload validation, physical counts, return flows,
   reprocessing, bank reconciliation, purchase/sales-order controls, and
   maker-checker approvals.
-- 81 frontend tests with no skips, frontend type-check, production build, API image build,
+- 86 frontend tests with no skips, frontend type-check, production build, API image build,
   and web image build pass.
-- The complete release pipeline passes 15/15 gates, including a previous-schema
+- The complete release pipeline passes 17/17 gates, including a previous-schema
   upgrade rehearsal, exact migration/index audit, independent restore drill,
   production dependency audits, and desktop/mobile browser checks.
 - The year-volume query harness passes its defined budgets.
+- A scan-first grey-inward screen supports keyboard operation, offline queues,
+  gross/tare/net weight, kg- or metre-based purchase valuation, direct scale
+  capture, rack assignment, and raw thermal label output through the paired
+  loopback hardware bridge.
+- Each piece carries parallel metre and kilogram history; receipt weight drives
+  GLM/GSM without overwriting the metre movement spine.
+- One receipt can settle an invoice with typed cash discount, shade/quality,
+  rate-difference, shortage, TDS, and other kapat. Sales brokerage accrues at
+  invoice, becomes payable only after full approved settlement, and can be
+  forfeited by an owner with an exact reversal trail.
+- Mixed and partial dyeing receipts are reconciled line-by-line to consolidated
+  process-house bills. Allocations cannot cross the process house or exceed the
+  actual receipt, and cancellation releases the exact allocation without
+  deleting its audit.
+- Posted balanced vouchers and ledger masters export as Tally XML. Approved
+  invoices download as a tax-invoice plus LR/packing PDF; the WhatsApp outbox
+  can queue customer or broker copies and outstanding-statement reminders.
 - Database-backed request throttling works across API replicas, JWT signing
   keys can be rotated through a bounded previous-key window, and unsafe
   PostgreSQL numerics are rejected instead of rounded.
@@ -96,6 +113,13 @@ contact. Start with a bounded set of live lots and reconcile every day.
    GST reports to the day's issued documents. Record any mismatch as a pilot
    defect, not an operator workaround.
 6. Back up the data and prove one restore into a non-production environment.
+7. Time a real 400–800-piece unloading run, calibrate the exact thermal label,
+   verify the scale protocol against certified weights, and record every
+   offline/reconnect result.
+8. Import Tally XML into a copy, not the live company, and reconcile voucher
+   counts and every ledger total before the CA sees it.
+9. If WhatsApp is enabled, prove approved templates, recipient consent,
+   invoice/statement PDF delivery, retry behavior, and duplicate suppression.
 
 ## Pilot exit criteria
 
@@ -103,6 +127,8 @@ contact. Start with a bounded set of live lots and reconcile every day.
   reconciliation difference.
 - CA accepts the reports and treatment for the pilot's actual transactions.
 - A restore drill, role/access review, and exception-approval review pass.
+- Actual printer/scale calibration, Tally-copy reconciliation, and any enabled
+  WhatsApp delivery acceptance pass with named evidence owners.
 - Live GSP/IRP tests pass separately before enabling live statutory submission.
 
 ## Non-negotiable external gates

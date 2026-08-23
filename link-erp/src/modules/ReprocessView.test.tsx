@@ -70,7 +70,8 @@ describe('ReprocessView', () => {
 
     await waitFor(() => expect(sent.some(call => call.path === '/dyeing-reprocess-receipts')).toBe(true));
     const call = sent.find(item => item.path === '/dyeing-reprocess-receipts')!;
-    expect(call.body.lines).toEqual([{ barcode: 'RP0007', receivedQty: 93, additionalRate: 2, finishGrade: 'B' }]);
+    expect(call.body.lines).toEqual([{ barcode: 'RP0007', receivedQty: 93,
+      receivedWeightKg: null, additionalRate: 2, finishGrade: 'B' }]);
     expect(await screen.findByText(/wait for a second person/i)).toBeInTheDocument();
   });
 });

@@ -28,6 +28,10 @@ export interface InwardLineInput {
   receivedQty: number;
   checkedQty: number;
   rate: number;
+  rateUom?: 'MTR' | 'KGS';
+  grossWeightKg?: number | null;
+  tareWeightKg?: number | null;
+  netWeightKg?: number | null;
   /** Where it was put down. Without this a physical count has nothing to check against. */
   rackCode?: string | null;
 }
@@ -52,6 +56,21 @@ export async function postGreyInward(
   lines: InwardLineInput[]
 ) {
   if (lines.length === 0) throw new Error('an inward needs at least one piece');
+  for (const line of lines) {
+    const supplied = [line.grossWeightKg, line.tareWeightKg, line.netWeightKg]
+      .filter(value => value !== null && value !== undefined).length;
+    if (supplied > 0 && supplied < 3) {
+      throw new Error(`${line.barcode}: gross, tare and net kilograms must be captured together`);
+    }
+    if (supplied === 3 && Math.abs(
+      Number(line.netWeightKg) - (Number(line.grossWeightKg) - Number(line.tareWeightKg))
+    ) > 0.005) {
+      throw new Error(`${line.barcode}: net kilograms must equal gross minus tare`);
+    }
+    if (line.rateUom === 'KGS' && !(Number(line.netWeightKg) > 0)) {
+      throw new Error(`${line.barcode}: a kilogram rate requires a positive net weight`);
+    }
+  }
 
   const entryNo = await nextDocNumber(ctx.db, ctx.tenantId, 'grey_inward', ctx.fy);
   const inward = await one<{ id: string }>(
@@ -72,12 +91,13 @@ export async function postGreyInward(
   const pieces = await many<{ id: string; barcode: string }>(
     ctx.db,
     `insert into piece (tenant_id, barcode, quality_id, design_id, grade_code, lot_no,
-                        status, held_by_ledger_id, grey_qty, current_qty, rack_code)
+                        status, held_by_ledger_id, grey_qty, current_qty, rack_code,
+                        grey_weight_kg, current_weight_kg)
      select $1, x.barcode, x.quality_id, x.design_id, x.grade_code, x.lot_no,
-            'grey_in_stock', null, x.qty, x.qty, x.rack_code
+            'grey_in_stock', null, x.qty, x.qty, x.rack_code, x.weight_kg, x.weight_kg
        from unnest($2::text[], $3::uuid[], $4::uuid[], $5::text[], $6::text[],
-                   $7::numeric[], $8::text[])
-            as x(barcode, quality_id, design_id, grade_code, lot_no, qty, rack_code)
+                   $7::numeric[], $8::text[], $9::numeric[])
+            as x(barcode, quality_id, design_id, grade_code, lot_no, qty, rack_code, weight_kg)
      returning id, barcode`,
     [
       ctx.tenantId,
@@ -87,7 +107,8 @@ export async function postGreyInward(
       lines.map(l => l.gradeCode),
       lines.map(l => l.lotNo || header.lotNo),
       lines.map(l => l.checkedQty),
-      lines.map(l => l.rackCode ?? header.rackCode ?? null)
+      lines.map(l => l.rackCode ?? header.rackCode ?? null),
+      lines.map(l => l.netWeightKg ?? null)
     ]
   );
 
@@ -100,10 +121,14 @@ export async function postGreyInward(
 
   await ctx.db.query(
     `insert into grey_inward_line (tenant_id, inward_id, po_line_id, piece_id, sno,
-                                   received_qty, checked_qty, rate)
-     select $1, $2, x.po_line_id, x.piece_id, x.sno, x.received_qty, x.checked_qty, x.rate
-       from unnest($3::uuid[], $4::uuid[], $5::smallint[], $6::numeric[], $7::numeric[], $8::numeric[])
-            as x(po_line_id, piece_id, sno, received_qty, checked_qty, rate)`,
+                                   received_qty, checked_qty, rate, rate_uom, gross_weight_kg,
+                                   tare_weight_kg, net_weight_kg)
+     select $1, $2, x.po_line_id, x.piece_id, x.sno, x.received_qty, x.checked_qty, x.rate, x.rate_uom,
+            x.gross_weight, x.tare_weight, x.net_weight
+       from unnest($3::uuid[], $4::uuid[], $5::smallint[], $6::numeric[], $7::numeric[],
+                   $8::numeric[], $9::text[], $10::numeric[], $11::numeric[], $12::numeric[])
+            as x(po_line_id, piece_id, sno, received_qty, checked_qty, rate, rate_uom,
+                 gross_weight, tare_weight, net_weight)`,
     [
       ctx.tenantId, inward.id,
       lines.map(l => l.poLineId ?? null),
@@ -111,16 +136,23 @@ export async function postGreyInward(
       lines.map((_, i) => i + 1),
       lines.map(l => l.receivedQty),
       lines.map(l => l.checkedQty),
-      lines.map(l => l.rate)
+      lines.map(l => l.rate),
+      lines.map(l => l.rateUom ?? 'MTR'),
+      lines.map(l => l.grossWeightKg ?? null),
+      lines.map(l => l.tareWeightKg ?? null),
+      lines.map(l => l.netWeightKg ?? null)
     ]
   );
 
   await ctx.db.query(
     `insert into piece_movement (tenant_id, piece_id, event, from_status, to_status,
-                                 qty_before, qty_after, counterparty_id, doc_type, doc_id, created_by)
-     select $1, x.piece_id, 'inward', null, 'grey_in_stock', 0, x.qty, $2, 'grey_inward', $3, $4
-       from unnest($5::uuid[], $6::numeric[]) as x(piece_id, qty)`,
-    [ctx.tenantId, header.partyId, inward.id, ctx.userId, pieceIds, lines.map(l => l.checkedQty)]
+                                 qty_before, qty_after, weight_before_kg, weight_after_kg,
+                                 counterparty_id, doc_type, doc_id, created_by)
+     select $1, x.piece_id, 'inward', null, 'grey_in_stock', 0, x.qty, null, x.weight_kg,
+            $2, 'grey_inward', $3, $4
+       from unnest($5::uuid[], $6::numeric[], $7::numeric[]) as x(piece_id, qty, weight_kg)`,
+    [ctx.tenantId, header.partyId, inward.id, ctx.userId, pieceIds,
+     lines.map(l => l.checkedQty), lines.map(l => l.netWeightKg ?? null)]
   );
 
   // Consume PO balance in one pass, not one update per line.
@@ -136,10 +168,12 @@ export async function postGreyInward(
   }
 
   // Grey is an asset until it is sold, not an expense the day it arrives.
-  const goods = sumBy(lines, l => round2(l.checkedQty * l.rate));
+  const costOf = (line: InwardLineInput) =>
+    (line.rateUom === 'KGS' ? Number(line.netWeightKg) : line.checkedQty) * line.rate;
+  const goods = sumBy(lines, l => round2(costOf(l)));
   await capitaliseGrey(
     ctx, inward.id,
-    lines.map((l, i) => ({ pieceId: pieceIds[i]!, cost: l.checkedQty * l.rate })),
+    lines.map((l, i) => ({ pieceId: pieceIds[i]!, cost: costOf(l) })),
     header.partyId, header.entryDate, entryNo
   );
 
@@ -167,11 +201,11 @@ export async function postDyeingIssue(
   if (barcodes.length === 0) throw new Error('a dyeing challan needs at least one piece');
 
   const pieces = await many<{
-    id: string; barcode: string; status: string; current_qty: number;
+    id: string; barcode: string; status: string; current_qty: number; current_weight_kg: number | null;
     quality_id: string; grade_code: string;
   }>(
     ctx.db,
-    `select id, barcode, status, current_qty, quality_id, grade_code from piece
+    `select id, barcode, status, current_qty, current_weight_kg, quality_id, grade_code from piece
       where barcode = any($1::text[]) order by id for update`,
     [barcodes]
   );
@@ -199,26 +233,30 @@ export async function postDyeingIssue(
   if (!issue) throw new Error('issue insert returned nothing');
 
   await ctx.db.query(
-    `insert into dyeing_issue_line (tenant_id, issue_id, piece_id, sno, issued_qty, job_rate)
-     select $1, $2, x.piece_id, x.sno, x.qty, $3
-       from unnest($4::uuid[], $5::smallint[], $6::numeric[]) as x(piece_id, sno, qty)`,
+    `insert into dyeing_issue_line (tenant_id, issue_id, piece_id, sno, issued_qty,
+                                    issued_weight_kg, job_rate)
+     select $1, $2, x.piece_id, x.sno, x.qty, x.weight_kg, $3
+       from unnest($4::uuid[], $5::smallint[], $6::numeric[], $7::numeric[])
+            as x(piece_id, sno, qty, weight_kg)`,
     [
       ctx.tenantId, issue.id, jobRate,
       pieces.map(p => p.id),
       pieces.map((_, i) => i + 1),
-      pieces.map(p => p.current_qty)
+      pieces.map(p => p.current_qty),
+      pieces.map(p => p.current_weight_kg)
     ]
   );
 
   await ctx.db.query(
     `insert into piece_movement (tenant_id, piece_id, event, from_status, to_status,
-                                 qty_before, qty_after, counterparty_id, doc_type, doc_id, created_by)
+                                 qty_before, qty_after, weight_before_kg, weight_after_kg,
+                                 counterparty_id, doc_type, doc_id, created_by)
      select $1, x.piece_id, 'issue', 'grey_in_stock', 'issued_to_dyeing',
-            x.qty, x.qty, $2, 'dyeing_issue', $3, $4
-       from unnest($5::uuid[], $6::numeric[]) as x(piece_id, qty)`,
+            x.qty, x.qty, x.weight_kg, x.weight_kg, $2, 'dyeing_issue', $3, $4
+       from unnest($5::uuid[], $6::numeric[], $7::numeric[]) as x(piece_id, qty, weight_kg)`,
     [
       ctx.tenantId, header.processHouseId, issue.id, ctx.userId,
-      pieces.map(p => p.id), pieces.map(p => p.current_qty)
+      pieces.map(p => p.id), pieces.map(p => p.current_qty), pieces.map(p => p.current_weight_kg)
     ]
   );
 
@@ -232,6 +270,7 @@ export interface ReceiptLineInput {
   receivedQty: number;
   finishGrade: string;
   jobRate: number;
+  receivedWeightKg?: number | null;
 }
 
 /** The return leg: finish comes back, shrinkage is reconciled, jobwork posts. */
@@ -251,9 +290,11 @@ export async function postDyeingReceipt(
   const barcodes = lines.map(l => l.barcode);
   const rows = await many<{
     piece_id: string; barcode: string; status: string; issue_line_id: string; issued_qty: number;
+    issued_weight_kg: number | null;
   }>(
     ctx.db,
-    `select p.id as piece_id, p.barcode, p.status, il.id as issue_line_id, il.issued_qty
+    `select p.id as piece_id, p.barcode, p.status, il.id as issue_line_id, il.issued_qty,
+            il.issued_weight_kg
        from piece p
        join dyeing_issue_line il on il.piece_id = p.id
        join dyeing_issue di on di.id = il.issue_id
@@ -315,42 +356,54 @@ export async function postDyeingReceipt(
 
   const resolved = lines.map((l, i) => {
     const r = byBarcode.get(l.barcode)!;
-    return { ...l, sno: i + 1, pieceId: r.piece_id, issueLineId: r.issue_line_id, issuedQty: r.issued_qty };
+    return { ...l, sno: i + 1, pieceId: r.piece_id, issueLineId: r.issue_line_id,
+      issuedQty: r.issued_qty, issuedWeightKg: r.issued_weight_kg };
   });
 
   await ctx.db.query(
     `insert into dyeing_receipt_line (tenant_id, receipt_id, issue_line_id, piece_id, sno,
-                                      issued_qty, received_qty, job_rate, finish_grade)
+                                      issued_qty, received_qty, received_weight_kg,
+                                      job_rate, finish_grade)
      select $1, $2, x.issue_line_id, x.piece_id, x.sno, x.issued_qty, x.received_qty,
-            x.job_rate, x.finish_grade
+            x.received_weight, x.job_rate, x.finish_grade
        from unnest($3::uuid[], $4::uuid[], $5::smallint[], $6::numeric[], $7::numeric[],
-                   $8::numeric[], $9::text[])
-            as x(issue_line_id, piece_id, sno, issued_qty, received_qty, job_rate, finish_grade)`,
+                   $8::numeric[], $9::numeric[], $10::text[])
+            as x(issue_line_id, piece_id, sno, issued_qty, received_qty, received_weight,
+                 job_rate, finish_grade)`,
     [
       ctx.tenantId, receipt.id,
       resolved.map(r => r.issueLineId), resolved.map(r => r.pieceId),
       resolved.map(r => r.sno), resolved.map(r => r.issuedQty),
-      resolved.map(r => r.receivedQty), resolved.map(r => r.jobRate),
+      resolved.map(r => r.receivedQty), resolved.map(r => r.receivedWeightKg ?? null),
+      resolved.map(r => r.jobRate),
       resolved.map(r => r.finishGrade)
     ]
   );
 
   await ctx.db.query(
-    `update piece p set finish_qty = x.qty, grade_code = x.grade
-       from unnest($1::uuid[], $2::numeric[], $3::text[]) as x(piece_id, qty, grade)
+    `update piece p set finish_qty = x.qty,
+                        finish_weight_kg = coalesce(x.weight_kg, p.current_weight_kg),
+                        grade_code = x.grade
+       from unnest($1::uuid[], $2::numeric[], $3::numeric[], $4::text[])
+            as x(piece_id, qty, weight_kg, grade)
       where p.id = x.piece_id`,
-    [resolved.map(r => r.pieceId), resolved.map(r => r.receivedQty), resolved.map(r => r.finishGrade)]
+    [resolved.map(r => r.pieceId), resolved.map(r => r.receivedQty),
+     resolved.map(r => r.receivedWeightKg ?? null), resolved.map(r => r.finishGrade)]
   );
 
   await ctx.db.query(
     `insert into piece_movement (tenant_id, piece_id, event, from_status, to_status,
-                                 qty_before, qty_after, counterparty_id, doc_type, doc_id, created_by)
+                                 qty_before, qty_after, weight_before_kg, weight_after_kg,
+                                 counterparty_id, doc_type, doc_id, created_by)
      select $1, x.piece_id, 'receipt', 'issued_to_dyeing', 'received_finish',
-            x.before_qty, x.after_qty, null, 'dyeing_receipt', $2, $3
-       from unnest($4::uuid[], $5::numeric[], $6::numeric[]) as x(piece_id, before_qty, after_qty)`,
+            x.before_qty, x.after_qty, x.before_weight, coalesce(x.after_weight, x.before_weight),
+            null, 'dyeing_receipt', $2, $3
+       from unnest($4::uuid[], $5::numeric[], $6::numeric[], $7::numeric[], $8::numeric[])
+            as x(piece_id, before_qty, after_qty, before_weight, after_weight)`,
     [
       ctx.tenantId, receipt.id, ctx.userId,
-      resolved.map(r => r.pieceId), resolved.map(r => r.issuedQty), resolved.map(r => r.receivedQty)
+      resolved.map(r => r.pieceId), resolved.map(r => r.issuedQty), resolved.map(r => r.receivedQty),
+      resolved.map(r => r.issuedWeightKg), resolved.map(r => r.receivedWeightKg ?? null)
     ]
   );
 

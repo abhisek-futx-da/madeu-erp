@@ -5,12 +5,15 @@ import { ListControls } from '../components/ListControls';
 import { api, type GradeRow, type LedgerRow, type PieceRow } from '../lib/api';
 import { useApi } from '../lib/useApi';
 import { usePagedList } from '../lib/usePagedList';
+import { captureScaleKg } from '../lib/hardware';
 
 interface ReprocessLine {
   id: string; sno: number; issued_qty: number; original_grade: string;
+  issued_weight_kg: number | null;
   barcode: string; status: string; quality: string; receipt_no: string | null;
   receipt_status: string | null; received_qty: number | null;
   additional_rate: number | null; finish_grade: string | null;
+  received_weight_kg: number | null;
 }
 interface ReprocessRow {
   id: string; issue_no: string; issue_date: string; challan_no: string; challan_date: string;
@@ -20,6 +23,7 @@ interface ReprocessRow {
 interface ReceiptLine {
   barcode: string; quality: string; issuedQty: number; receivedQty: number;
   additionalRate: number; finishGrade: string;
+  issuedWeightKg: number | null; receivedWeightKg: number | null;
 }
 interface ReprocessPrintDoc {
   issue_no: string; issue_date: string; challan_no: string; challan_date: string;
@@ -112,10 +116,16 @@ export const ReprocessView: React.FC = () => {
     if (!source) { setNotice(`${code} is not outstanding on the selected reprocess challan`); return; }
     setReceiptLines(old => [...old, { barcode: source.barcode, quality: source.quality,
       issuedQty: Number(source.issued_qty), receivedQty: Number(source.issued_qty),
-      additionalRate: 0, finishGrade: source.original_grade }]); setNotice(null);
+      additionalRate: 0, finishGrade: source.original_grade,
+      issuedWeightKg: source.issued_weight_kg == null ? null : Number(source.issued_weight_kg),
+      receivedWeightKg: source.issued_weight_kg == null ? null : Number(source.issued_weight_kg) }]); setNotice(null);
   };
   const updateReceipt = (index: number, patch: Partial<ReceiptLine>) =>
     setReceiptLines(old => old.map((line, i) => i === index ? { ...line, ...patch } : line));
+  const readReceiptWeight = async (index: number) => {
+    try { updateReceipt(index, { receivedWeightKg: await captureScaleKg() }); }
+    catch (e) { setNotice(e instanceof Error ? e.message : String(e)); }
+  };
   const saveReceipt = async () => {
     if (!selectedId || !receiptChallan.trim() || receiptLines.length === 0) {
       setNotice('Select an open reprocess challan, enter the process-house challan, and scan returned pieces'); return;
@@ -124,7 +134,8 @@ export const ReprocessView: React.FC = () => {
     try {
       const out = await api.post<any>('/dyeing-reprocess-receipts', { reprocessId: selectedId,
         receiptDate, challanNo: receiptChallan.trim(), challanDate: receiptDate,
-        lines: receiptLines.map(({ barcode, receivedQty, additionalRate, finishGrade }) => ({ barcode, receivedQty, additionalRate, finishGrade })) });
+        lines: receiptLines.map(({ barcode, receivedQty, receivedWeightKg, additionalRate, finishGrade }) =>
+          ({ barcode, receivedQty, receivedWeightKg, additionalRate, finishGrade })) });
       setNotice(out.status === 'pending_approval'
         ? `${out.receiptNo} submitted — stock and ₹${Number(out.amount).toFixed(2)} charge wait for a second person`
         : `${out.receiptNo} posted — ${out.pieces} piece(s) received`);
@@ -158,7 +169,7 @@ export const ReprocessView: React.FC = () => {
           {selected && <button type="button" onClick={() => setPrinting(selected.id)} className="erp-btn mt-5 md:col-span-2"><Printer className="h-4 w-4 text-blue-700" /> Issue challan</button>}
         </div>
         <form onSubmit={scanReceipt} className="flex gap-2 border-t border-slate-200 p-3"><label className="flex-1"><span className="erp-label block">Scan returned barcode</span><input aria-label="Scan returned reprocess barcode" value={receiptScan} onChange={e => setReceiptScan(e.target.value)} className="erp-input w-full font-mono" /></label><button className="erp-btn mt-5" type="submit">Add scan</button><button className="erp-btn erp-btn-primary mt-5" type="button" disabled={busy} onClick={saveReceipt}>Submit receipt</button></form>
-        {receiptLines.length > 0 && <div className="overflow-auto"><table className="min-w-[800px] w-full"><thead><tr><th>Barcode</th><th>Quality</th><th className="text-right">Sent qty</th><th className="text-right">Received qty</th><th className="text-right">Extra rate</th><th>Finish grade</th><th></th></tr></thead><tbody>{receiptLines.map((line, i) => <tr key={line.barcode}><td className="font-mono">{line.barcode}</td><td>{line.quality}</td><td className="text-right font-mono">{line.issuedQty.toFixed(2)}</td><td><input aria-label={`Received quantity for ${line.barcode}`} type="number" min="0.01" step="0.01" value={line.receivedQty} onChange={e => updateReceipt(i, { receivedQty: Number(e.target.value) })} className="erp-input w-28 text-right" /></td><td><input aria-label={`Additional rate for ${line.barcode}`} type="number" min="0" step="0.01" value={line.additionalRate} onChange={e => updateReceipt(i, { additionalRate: Number(e.target.value) })} className="erp-input w-28 text-right" /></td><td><select aria-label={`Finish grade for ${line.barcode}`} value={line.finishGrade} onChange={e => updateReceipt(i, { finishGrade: e.target.value })} className="erp-input w-full">{(grades.data ?? []).map(grade => <option key={grade.code} value={grade.code}>{grade.name}</option>)}</select></td><td><button type="button" className="erp-btn" onClick={() => setReceiptLines(old => old.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4 text-red-700" /></button></td></tr>)}</tbody></table></div>}
+        {receiptLines.length > 0 && <div className="overflow-auto"><table className="min-w-[1000px] w-full"><thead><tr><th>Barcode</th><th>Quality</th><th className="text-right">Sent qty</th><th className="text-right">Received qty</th><th className="text-right">Sent kg</th><th className="text-right">Received kg</th><th className="text-right">Extra rate</th><th>Finish grade</th><th></th></tr></thead><tbody>{receiptLines.map((line, i) => <tr key={line.barcode}><td className="font-mono">{line.barcode}</td><td>{line.quality}</td><td className="text-right font-mono">{line.issuedQty.toFixed(2)}</td><td><input aria-label={`Received quantity for ${line.barcode}`} type="number" min="0.01" step="0.01" value={line.receivedQty} onChange={e => updateReceipt(i, { receivedQty: Number(e.target.value) })} className="erp-input w-28 text-right" /></td><td className="text-right font-mono">{line.issuedWeightKg == null ? '—' : line.issuedWeightKg.toFixed(3)}</td><td><div className="flex gap-1"><input aria-label={`Received weight for ${line.barcode}`} type="number" min="0" step="0.001" value={line.receivedWeightKg ?? ''} onChange={e => updateReceipt(i, { receivedWeightKg: e.target.value === '' ? null : Number(e.target.value) })} className="erp-input w-24 text-right" /><button type="button" className="erp-btn px-1" onClick={() => void readReceiptWeight(i)}>⚖</button></div></td><td><input aria-label={`Additional rate for ${line.barcode}`} type="number" min="0" step="0.01" value={line.additionalRate} onChange={e => updateReceipt(i, { additionalRate: Number(e.target.value) })} className="erp-input w-28 text-right" /></td><td><select aria-label={`Finish grade for ${line.barcode}`} value={line.finishGrade} onChange={e => updateReceipt(i, { finishGrade: e.target.value })} className="erp-input w-full">{(grades.data ?? []).map(grade => <option key={grade.code} value={grade.code}>{grade.name}</option>)}</select></td><td><button type="button" className="erp-btn" onClick={() => setReceiptLines(old => old.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4 text-red-700" /></button></td></tr>)}</tbody></table></div>}
       </section>
 
       <section className="overflow-auto rounded border border-[#b8c9dd] bg-white"><header className="border-b border-slate-200 px-3 py-2 font-bold text-blue-900">Reprocess register</header><ListControls list={list} placeholder="Issue, challan, process house or reason…" /><table className="min-w-[900px] w-full"><thead><tr><th>Issue</th><th>Date</th><th>Process house</th><th>Barcode</th><th>Quality</th><th className="text-right">Sent</th><th>Receipt</th><th className="text-right">Back</th><th>Status</th><th></th></tr></thead><tbody>{list.rows.flatMap(row => row.lines.map(line => <tr key={`${row.id}-${line.id}`}><td className="font-mono font-bold text-blue-800">{row.issue_no}</td><td>{row.issue_date}</td><td>{row.process_house}</td><td className="font-mono">{line.barcode}</td><td>{line.quality}</td><td className="text-right font-mono">{Number(line.issued_qty).toFixed(2)}</td><td className="font-mono">{line.receipt_no ?? 'pending'}</td><td className="text-right font-mono">{line.received_qty == null ? '—' : Number(line.received_qty).toFixed(2)}</td><td>{line.receipt_status ?? row.status}</td><td><button type="button" className="erp-btn" title={`Print reprocess challan ${row.issue_no}`} onClick={() => setPrinting(row.id)}><Printer className="h-4 w-4 text-blue-700" /></button></td></tr>))}{!list.loading && list.rows.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-slate-500">No reprocess work recorded</td></tr>}</tbody></table></section>

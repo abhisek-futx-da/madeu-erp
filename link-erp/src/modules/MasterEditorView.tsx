@@ -44,6 +44,7 @@ export const MASTERS: Record<string, MasterSpec> = {
       { key: 'control_account_id', label: 'Control A/c', type: 'ref', from: '/control-accounts', required: true, span: 6 },
       { key: 'gstin', label: 'GSTIN', type: 'text', span: 3, uppercase: true },
       { key: 'pan', label: 'PAN', type: 'text', span: 3, uppercase: true },
+      { key: 'mobile_e164', label: 'WhatsApp (+country code)', type: 'text', span: 3 },
       { key: 'gst_reg_type', label: 'GST Registration', type: 'select', span: 3,
         options: ['regular', 'composition', 'unregistered', 'sez', 'overseas'] },
       { key: 'credit_days', label: 'Credit Days', type: 'number', span: 2 },
@@ -54,7 +55,7 @@ export const MASTERS: Record<string, MasterSpec> = {
       { key: 'is_active', label: 'In Use', type: 'checkbox', span: 2 }
     ],
     blank: {
-      code: '', name: '', alias: '', control_account_id: '', gstin: '', pan: '',
+      code: '', name: '', alias: '', control_account_id: '', gstin: '', pan: '', mobile_e164: '',
       gst_reg_type: 'unregistered', credit_days: 0, credit_limit: 0,
       is_msme: false, auto_tds_tcs: false,
       rcm_applicable: false, is_active: true
