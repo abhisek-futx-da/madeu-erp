@@ -119,6 +119,18 @@ export const MASTERS: Record<string, MasterSpec> = {
     ],
     blank: { code: '', cms: 147, inches: 58 }
   },
+  divisions: {
+    title: 'Division Master',
+    path: '/divisions',
+    listColumns: [{ key: 'code', label: 'Code' }, { key: 'name', label: 'Division' }],
+    fields: [
+      { key: 'code', label: 'Code', type: 'text', required: true, span: 3, uppercase: true },
+      { key: 'name', label: 'Name', type: 'text', required: true, span: 5 },
+      { key: 'sort_order', label: 'Order', type: 'number', span: 2 },
+      { key: 'is_active', label: 'In use', type: 'checkbox', span: 2 }
+    ],
+    blank: { code: '', name: '', sort_order: 0, is_active: true }
+  },
   racks: {
     title: 'Rack Master',
     path: '/racks',

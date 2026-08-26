@@ -50,6 +50,8 @@ export interface Scope {
   rackCode?: string | null;
   qualityId?: string | null;
   lotNo?: string | null;
+  /** One thaan: a floor re-measure rather than a rack. */
+  barcode?: string | null;
 }
 
 interface ExceptionRow {
@@ -65,7 +67,8 @@ interface ExceptionRow {
 
 const SCOPE_SQL = `($2::text is null or p.rack_code = $2)
                    and ($3::uuid is null or p.quality_id = $3)
-                   and ($4::text is null or p.lot_no = $4)`;
+                   and ($4::text is null or p.lot_no = $4)
+                   and ($5::text is null or p.barcode = $5)`;
 
 // ------------------------------------------------------------------- open --
 
@@ -77,7 +80,8 @@ const SCOPE_SQL = `($2::text is null or p.rack_code = $2)
 export async function openCount(
   ctx: Ctx, input: Scope & { countDate: string; reason: string }
 ) {
-  const scope = [input.rackCode ?? null, input.qualityId ?? null, input.lotNo ?? null];
+  const scope = [input.rackCode ?? null, input.qualityId ?? null, input.lotNo ?? null,
+                 input.barcode ?? null];
 
   // Two open sheets over one shelf would each write the other's pieces off.
   const clash = await one<{ count_no: string; barcode: string }>(
@@ -101,10 +105,11 @@ export async function openCount(
   const count = await one<{ id: string }>(
     ctx.db,
     `insert into stock_count (tenant_id, count_no, count_date, rack_code, quality_id,
-                              lot_no, reason, created_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
+                              lot_no, reason, created_by, barcode)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
     [ctx.tenantId, countNo, input.countDate, input.rackCode ?? null,
-     input.qualityId ?? null, input.lotNo ?? null, input.reason, ctx.userId]
+     input.qualityId ?? null, input.lotNo ?? null, input.reason, ctx.userId,
+     input.barcode ?? null]
   );
   if (!count) throw new Error('stock count insert returned nothing');
 
@@ -113,10 +118,10 @@ export async function openCount(
     `with snap as (
        insert into stock_count_expected (tenant_id, count_id, piece_id, barcode,
                                          status, rack_code, qty, cost)
-       select $1, $5, p.id, p.barcode, p.status, p.rack_code, p.current_qty,
+       select $1, $6, p.id, p.barcode, p.status, p.rack_code, p.current_qty,
               p.grey_cost + p.jobwork_cost + p.other_cost
          from piece p
-        where p.status::text = any($6::text[]) and ${SCOPE_SQL}
+        where p.status::text = any($7::text[]) and ${SCOPE_SQL}
        returning 1
      )
      select count(*)::int as n from snap`,

@@ -33,6 +33,8 @@ export const NAV: NavGroup[] = [
       { id: 'units', label: 'Unit Master' },
       { id: 'widths', label: 'Width Master' },
       { id: 'racks', label: 'Rack Master' },
+      { id: 'divisions', label: 'Division Master' },
+      { id: 'party_aliases', label: 'Customer Names For Our Cloth' },
       { id: 'bank-accounts', label: 'Bank Accounts' },
       { id: 'users', label: 'People & Access', ownerOnly: true },
       { id: 'data_onboarding', label: 'Data Migration & Onboarding', ownerOnly: true }

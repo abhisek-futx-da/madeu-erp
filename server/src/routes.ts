@@ -20,6 +20,10 @@ import { splitPiece, mergePieces, lineageOf } from './regroup.ts';
 import { answerDeclaration, createPortalUser } from './portal.ts';
 import { retrySubmission, cancelSubmission, releaseStale } from './provider-queue.ts';
 import {
+  saveAlias, listAliases, deleteAlias, balesFor, missingFor, flowFor,
+  flowForDocument, quickCheck
+} from './trade-depth.ts';
+import {
   openCount, addScans, removeScan, exceptionsFor, submitCount, applyStockCount
 } from './stockcount.ts';
 import { configurationRouter } from './configuration.ts';
@@ -1137,6 +1141,103 @@ export function buildRoutes() {
       const released = await withTenant(tenantId, userId, db =>
         releaseStale({ db, tenantId, userId }));
       res.json({ released });
+    } catch (e) { next(e); }
+  });
+
+  // --------------------------------------------------------- trade depth --
+
+  /** What this customer calls our cloth; printed on their challan and invoice. */
+  api.get('/party-aliases', async (req, res, next) => {
+    try {
+      const q = z.object({ partyId: uuid.optional() }).parse(req.query);
+      const { tenantId, userId } = req.session!;
+      res.json(await withTenant(tenantId, userId, db => listAliases(db, q.partyId ?? null)));
+    } catch (e) { next(e); }
+  });
+
+  api.post('/party-aliases', requireWrite('masters'), async (req, res, next) => {
+    try {
+      const body = z.object({
+        partyId: uuid,
+        qualityId: uuid,
+        designId: uuid.nullish(),
+        theirQuality: z.string().max(120).default(''),
+        theirDesign: z.string().max(120).default(''),
+        notes: z.string().max(200).default('')
+      }).parse(req.body);
+      res.status(201).json(await withCtx(req, ctx => saveAlias(ctx, body)));
+    } catch (e) { next(e); }
+  });
+
+  api.delete('/party-aliases/:id', requireWrite('masters'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const { tenantId, userId } = req.session!;
+      res.json(await withTenant(tenantId, userId, db => deleteAlias(db, id)));
+    } catch (e) { next(e); }
+  });
+
+  /** The packing list as the lorry is actually loaded: one section per bale. */
+  api.get('/dispatches/:id/bales', async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const { tenantId, userId } = req.session!;
+      res.json(await withTenant(tenantId, userId, db => balesFor(db, id)));
+    } catch (e) { next(e); }
+  });
+
+  /**
+   * "I counted thirty-eight, the paper says forty, which two am I looking for."
+   * A POST because the scanned set is the question, not a filter on a resource.
+   */
+  api.post('/documents/:kind/:id/missing', async (req, res, next) => {
+    try {
+      const kind = z.enum(['dyeing_issue', 'sales_order']).parse(req.params.kind);
+      const id = uuid.parse(req.params.id);
+      const body = z.object({
+        scanned: z.array(barcode).max(5000).default([])
+      }).parse(req.body ?? {});
+      const { tenantId, userId } = req.session!;
+      res.json(await withTenant(tenantId, userId, db =>
+        missingFor(db, kind, id, body.scanned)));
+    } catch (e) { next(e); }
+  });
+
+  /** One thaan's journey, and every thaan on one document's journey. */
+  api.get('/pieces/:barcode/flow', async (req, res, next) => {
+    try {
+      const { tenantId, userId } = req.session!;
+      res.json(await withTenant(tenantId, userId, db =>
+        flowFor(db, barcode.parse(req.params.barcode))));
+    } catch (e) { next(e); }
+  });
+
+  api.get('/documents/:kind/:id/flow', async (req, res, next) => {
+    try {
+      const kind = z.enum(['grey_inward', 'dyeing_issue', 'dyeing_receipt', 'dispatch'])
+        .parse(req.params.kind);
+      const id = uuid.parse(req.params.id);
+      const { tenantId, userId } = req.session!;
+      res.json(await withTenant(tenantId, userId, db => flowForDocument(db, kind, id)));
+    } catch (e) { next(e); }
+  });
+
+  /**
+   * Re-measuring one thaan on the floor. Deliberately not a shortcut: it opens
+   * a stock count scoped to that barcode and submits it, so a second person
+   * still approves before a metre or a rupee moves.
+   */
+  api.post('/pieces/:barcode/recheck', requireWrite('store'), async (req, res, next) => {
+    try {
+      const body = z.object({
+        countedQty: qty,
+        reason: z.string().trim().min(1).max(200),
+        rackCode: z.string().max(20).nullish()
+      }).parse(req.body);
+      const out = await withCtx(req, ctx => quickCheck(ctx, {
+        barcode: barcode.parse(req.params.barcode), ...body
+      }));
+      res.status(201).json(out);
     } catch (e) { next(e); }
   });
 

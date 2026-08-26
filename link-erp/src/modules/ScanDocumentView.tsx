@@ -3,7 +3,7 @@ import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { useApi } from '../lib/useApi';
 import { api } from '../lib/api';
 import type { LedgerRow, Page, PieceRow } from '../lib/api';
-import { QrCode, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react';
+import { QrCode, AlertTriangle, CheckCircle2, Trash2, ListChecks, History } from 'lucide-react';
 import { enqueue, isOnline } from '../lib/offlineQueue';
 
 /**
@@ -95,6 +95,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 interface Line {
   barcode: string; quality: string; grade: string; qty: number; rate: number;
   soLineId?: string;
+  /** Which bale this thaan was strapped into; the customer reads it, not us. */
+  baleNo?: number;
 }
 
 interface SalesOrderRow {
@@ -114,6 +116,9 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
   const [lines, setLines] = useState<Line[]>([]);
   const [scan, setScan] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [pickFilter, setPickFilter] = useState('');
+  const [flowFor, setFlowFor] = useState<string | null>(null);
 
   const ledgers = useApi<LedgerRow[]>('/ledgers');
   const controls = useApi<{ id: string; nature: string }[]>('/control-accounts');
@@ -133,6 +138,15 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
     .flatMap(order => order.lines
       .filter(line => Number(line.dispatched_qty) < Number(line.qty))
       .map(line => ({ ...line, orderNo: order.order_no })));
+
+  // Already-scanned pieces stay listed, checked, so the picker also shows what
+  // is on the challan rather than silently hiding it.
+  const pickable = (eligible.data ?? []).filter(p => {
+    const needle = pickFilter.trim().toLowerCase();
+    if (!needle) return true;
+    return [p.barcode, p.quality, p.lot_no, p.rack_code, p.grade_code]
+      .some(v => (v ?? '').toString().toLowerCase().includes(needle));
+  });
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -207,7 +221,10 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
         ? { barcodes: lines.map(l => l.barcode), note: challanNo }
         : {
             partyId, challanNo, challanDate,
-            lines: lines.map(l => ({ barcode: l.barcode, rate: l.rate, soLineId: l.soLineId || null }))
+            lines: lines.map(l => ({
+              barcode: l.barcode, rate: l.rate, soLineId: l.soLineId || null,
+              baleNo: l.baleNo ?? null
+            }))
           };
 
     // A dropped signal must not lose the scan; queue it and flush on reconnect.
@@ -351,10 +368,76 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
           <button type="submit" className="erp-btn erp-btn-primary min-h-11 px-5 md:min-h-0">
             Add
           </button>
+          {/* Scanning two hundred thaans one at a time is not a workflow. The
+              picker is beside the scanner, not instead of it. */}
+          <button type="button" onClick={() => setPicking(v => !v)}
+                  className="erp-btn min-h-11 px-4 md:min-h-0">
+            <ListChecks className="w-3.5 h-3.5" />
+            {picking ? 'Hide list' : 'Pick from stock'}
+          </button>
           <span className="text-slate-500 basis-full md:basis-auto md:self-center">
             {(eligible.data ?? []).length} pieces eligible
           </span>
         </form>
+
+        {picking && (
+          <div className="bg-white rounded border border-[#b8c9dd] overflow-hidden">
+            <div className="bg-slate-100 border-b border-slate-300 px-2 py-1.5
+                            flex flex-wrap items-center gap-2">
+              <span className="font-bold">Pick from stock</span>
+              <input value={pickFilter} onChange={e => setPickFilter(e.target.value)}
+                     aria-label="Filter stock"
+                     placeholder="quality, lot, rack or barcode"
+                     className="erp-input font-mono flex-1 min-w-[10rem]" />
+              <button onClick={() => {
+                const chosen = pickable.filter(p => !lines.some(l => l.barcode === p.barcode));
+                setLines(prev => [...prev, ...chosen.map(p => ({
+                  barcode: p.barcode, quality: p.quality, grade: p.grade_code,
+                  qty: Number(p.current_qty), rate
+                }))]);
+                setNotice(`${chosen.length} piece(s) added from stock`);
+              }} className="erp-btn erp-btn-primary" disabled={pickable.length === 0}>
+                Add all {pickable.length}
+              </button>
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              <table className="w-full">
+                <tbody>
+                  {pickable.length === 0 && (
+                    <tr><td className="px-2 py-4 text-center text-slate-400">
+                      Nothing eligible matches that.
+                    </td></tr>
+                  )}
+                  {pickable.slice(0, 300).map(p => {
+                    const on = lines.some(l => l.barcode === p.barcode);
+                    return (
+                      <tr key={p.barcode} className="border-b border-slate-100">
+                        <td className="px-2 py-1.5 w-10">
+                          <input type="checkbox" className="w-5 h-5" checked={on}
+                                 aria-label={`Pick ${p.barcode}`}
+                                 onChange={() => setLines(prev => on
+                                   ? prev.filter(l => l.barcode !== p.barcode)
+                                   : [...prev, { barcode: p.barcode, quality: p.quality,
+                                                 grade: p.grade_code, qty: Number(p.current_qty), rate }])} />
+                        </td>
+                        <td className="px-2 py-1.5 font-mono text-blue-800">{p.barcode}</td>
+                        <td className="px-2 py-1.5">{p.quality}</td>
+                        <td className="px-2 py-1.5 text-slate-500">
+                          {p.lot_no}{p.rack_code ? ` · ${p.rack_code}` : ''}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono">
+                          {Number(p.current_qty).toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {flowFor && <FlowPanel barcode={flowFor} onClose={() => setFlowFor(null)} />}
 
         <div className="bg-white rounded border border-[#b8c9dd] overflow-hidden">
           <div className="overflow-x-auto">
@@ -369,6 +452,7 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
                   <th className="px-2 py-1.5 font-bold text-right">Rate</th>
                   <th className="px-2 py-1.5 font-bold text-right">Amount</th>
                 </>}
+                {kind === 'dispatch' && <th className="px-2 py-1.5 font-bold w-20">Bale</th>}
                 {kind === 'dispatch' && <th className="px-2 py-1.5 font-bold">Sales order allocation</th>}
                 <th className="px-2 py-1.5"></th>
               </tr>
@@ -390,6 +474,14 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
                     <td className="px-2 py-1 text-right font-mono">₹{(l.qty * l.rate).toFixed(2)}</td>
                   </>}
                   {kind === 'dispatch' && <td className="px-2 py-1">
+                    <input type="number" min="1" max="9999" inputMode="numeric"
+                           aria-label={`Bale number for ${l.barcode}`}
+                           value={l.baleNo ?? ''} className="erp-input w-16 text-right font-mono"
+                           onChange={e => setLines(prev => prev.map((line, j) => j === i
+                             ? { ...line, baleNo: e.target.value ? Number(e.target.value) : undefined }
+                             : line))} />
+                  </td>}
+                  {kind === 'dispatch' && <td className="px-2 py-1">
                     <select aria-label={`Sales order for ${l.barcode}`} value={l.soLineId ?? ''}
                       onChange={e => {
                         const chosen = openOrderLines.find(line => line.id === e.target.value);
@@ -406,7 +498,13 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
                         </option>)}
                     </select>
                   </td>}
-                  <td className="px-2 py-1 text-right">
+                  <td className="px-2 py-1 text-right whitespace-nowrap">
+                    <button onClick={() => setFlowFor(l.barcode)} title="Where this thaan has been"
+                            aria-label={`Journey of ${l.barcode}`}
+                            className="text-blue-700 hover:text-blue-900 min-h-11 min-w-11
+                                       inline-flex items-center justify-center md:min-h-0 md:min-w-0">
+                      <History className="w-4 h-4" />
+                    </button>
                     <button onClick={() => setLines(prev => prev.filter((_, j) => j !== i))}
                             title="Remove line" aria-label={`Remove ${l.barcode}`}
                             className="text-red-600 hover:text-red-800 min-h-11 min-w-11
@@ -434,6 +532,66 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+/**
+ * Where a thaan has been, beside the document rather than in a separate report.
+ * A storekeeper holding a barcode gun should not have to leave the challan to
+ * find out why the piece in their hand is not where the paper says it is.
+ */
+const FlowPanel: React.FC<{ barcode: string; onClose: () => void }> = ({ barcode, onClose }) => {
+  const flow = useApi<{
+    event: string; from_status: string | null; to_status: string;
+    qty_before: number; qty_after: number; counterparty: string | null;
+    doc_type: string; occurred_at: string;
+  }[]>(`/pieces/${encodeURIComponent(barcode)}/flow`, [barcode]);
+
+  return (
+    <div className="bg-white rounded border border-[#b8c9dd] overflow-hidden">
+      <div className="bg-slate-100 border-b border-slate-300 px-2 py-1.5 flex items-center gap-2">
+        <History className="w-3.5 h-3.5 text-blue-700" />
+        <span className="font-bold">Journey of <span className="font-mono">{barcode}</span></span>
+        <button onClick={onClose} className="erp-btn py-0.5 ml-auto">Close</button>
+      </div>
+      {flow.loading && <p className="px-2 py-3 text-slate-500">Loading…</p>}
+      {flow.error && <p className="px-2 py-3 text-red-700">{flow.error}</p>}
+      {!flow.loading && (flow.data ?? []).length === 0 && (
+        <p className="px-2 py-3 text-slate-500">Nothing has happened to this thaan yet.</p>
+      )}
+      {(flow.data ?? []).length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="border-b border-slate-200 text-left text-slate-600">
+              <tr>
+                <th className="px-2 py-1">When</th><th className="px-2 py-1">What</th>
+                <th className="px-2 py-1">From → to</th>
+                <th className="px-2 py-1 text-right">Qty</th>
+                <th className="px-2 py-1">With</th><th className="px-2 py-1">Document</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(flow.data ?? []).map((e, i) => (
+                <tr key={i} className="border-b border-slate-100">
+                  <td className="px-2 py-1 whitespace-nowrap">
+                    {new Date(e.occurred_at).toLocaleDateString('en-IN')}
+                  </td>
+                  <td className="px-2 py-1 font-semibold">{e.event}</td>
+                  <td className="px-2 py-1 text-slate-600">
+                    {(e.from_status ?? '—').replace(/_/g, ' ')} → {e.to_status.replace(/_/g, ' ')}
+                  </td>
+                  <td className="px-2 py-1 text-right font-mono">
+                    {Number(e.qty_before).toFixed(2)} → {Number(e.qty_after).toFixed(2)}
+                  </td>
+                  <td className="px-2 py-1">{e.counterparty ?? '—'}</td>
+                  <td className="px-2 py-1 text-slate-500">{e.doc_type.replace(/_/g, ' ')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 };

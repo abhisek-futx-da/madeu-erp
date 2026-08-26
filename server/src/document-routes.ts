@@ -387,7 +387,10 @@ export function documentRouter() {
         lines: z.array(z.object({
           barcode: z.string().min(4).max(40),
           rate: money.nonnegative(),
-          soLineId: uuid.nullish()
+          soLineId: uuid.nullish(),
+          // Which bale this thaan was strapped into; it is what the customer
+          // reads when they cut the strap open.
+          baleNo: z.coerce.number().int().min(1).max(9999).nullish()
         })).min(1).max(MAX_DOC_LINES)
       }).parse(req.body);
       const out = await withCtx(req, ctx => postDispatch(ctx, body, body.lines));
@@ -458,13 +461,21 @@ export function documentRouter() {
             where d.id = $1`, [id]);
         if (!head) return null;
         const lines = await many<any>(db,
-          `select dl.sno, p.barcode, p.lot_no, p.grade_code, p.uom,
+          // The customer's own name for the cloth wins where they have given us
+          // one: a packing list that reads in our vocabulary makes their
+          // storekeeper reconcile it by hand.
+          `select dl.sno, dl.bale_no, p.barcode, p.lot_no, p.grade_code, p.uom,
                   q.name as quality, q.construction, q.hsn_code,
-                  des.name as design, dl.qty, dl.rate, (dl.qty * dl.rate) as value
+                  des.name as design, dl.qty, dl.rate, (dl.qty * dl.rate) as value,
+                  alias.their_quality, alias.their_design
              from dispatch_line dl
              join piece p on p.id = dl.piece_id
              join quality q on q.id = p.quality_id
              left join design des on des.id = p.design_id
+             left join lateral party_item_name(
+               (select party_id from dispatch where id = dl.dispatch_id),
+               p.quality_id, p.design_id
+             ) alias on true
             where dl.dispatch_id = $1 order by dl.sno`, [id]);
         return {
           ...head,
