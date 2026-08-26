@@ -46,5 +46,6 @@ if command -v gpg > /dev/null; then
     "${MIRROR}/$(basename "${ENC}")" "${ENC_TARGET}"
   echo "encrypted offsite restore drill passed: ${ENC_TARGET}"
 else
-  echo "gpg is not installed here, so the encrypted round trip was NOT exercised" >&2
+  echo "gpg is not installed; encrypted offsite restore proof is mandatory" >&2
+  exit 1
 fi
