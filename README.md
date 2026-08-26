@@ -1,16 +1,17 @@
-# Link ERP — textile trading ERP
+# Link ERP — modular textile ERP
 
-A working ERP for a cloth trader–processor: grey arrives from weavers barcoded
-one piece at a time, goes out to dyeing houses on a delivery challan, comes back
-as finish, is cut, packed and dispatched, and is billed under GST. Every step
-posts double-entry vouchers, and every piece keeps a movement log nothing can
-edit.
+A working shared cloth ERP with parallel weaving, dyeing, exports, logistics,
+and garments editions. Grey arrives from weavers barcoded one piece at a time,
+goes out to dyeing houses, comes back as finish, is cut, packed, dispatched,
+and billed under GST. Every financial step posts double-entry vouchers, every
+piece keeps an immutable movement log, and edition workflows share the same
+users, locations, audit, evidence, reports, search, and integration platform.
 
 Modelled on the legacy Windows system a Bhiwandi mill runs today. Local design
 references and one-off repair artifacts are kept under `_local_archive/` and
 are deliberately excluded from the release source.
 
-- **Database** — Postgres 16, row-level security per tenant, 45 tracked
+- **Database** — Postgres 16, row-level security per tenant, 51 tracked
   migrations
 - **API** — Node 26 running TypeScript directly, Express 5, zod at every edge
 - **Web** — React 19, Vite, Tailwind, strict TypeScript
@@ -46,8 +47,9 @@ it does not replace CA review, an IRP sandbox test, or a mill pilot.
 For a real mill, never run the demo seed scripts. After migrations, use the
 profile-gated empty-company bootstrap in `docs/PRODUCTION_DEPLOYMENT.md`.
 It creates the named company, owner, system accounts, open financial year,
-document series, and the stock-count second signature; it creates no dummy
-party, stock, bank, HSN/SAC, rate, or accounting transaction.
+document series, and owner approval for all nine financial/stock exception
+classes; it creates no dummy party, stock, bank, HSN/SAC, rate, or accounting
+transaction.
 
 ### Locally, for development
 
@@ -76,6 +78,20 @@ your own: `npm --prefix server run dev:test-db` (:4010) and
 ./scripts/restore.sh backups/x.dump     # into a scratch database, checked
 ```
 
+For a pilot, encrypt it and get it off the machine:
+
+```bash
+BACKUP_RECIPIENT=ops@example.com BACKUP_MIRROR_DIR=/mnt/offsite ./scripts/backup.sh
+```
+
+`BACKUP_RECIPIENT` encrypts to a GPG public key, so the server keeps no secret
+capable of reading its own archives; `BACKUP_PASSPHRASE` is the symmetric
+fallback. Either way the archive is decrypted and compared against the original
+before the plaintext is deleted — verifying the plaintext and then shipping an
+unopened ciphertext is how people find out at the worst possible moment.
+Requesting encryption without `gpg` installed fails the backup rather than
+quietly writing plaintext. `restore.sh` accepts a `.dump.gpg` directly.
+
 `backup.sh` refuses to keep an archive `pg_restore --list` cannot read. If the
 host tools are older than the database, the scripts automatically use the
 matching official PostgreSQL client image rather than creating an unreadable
@@ -89,8 +105,8 @@ voucher's balance, and the piece cache against its append-only movement log.
 ## Tests
 
 ```bash
-cd server   && PGHOST=... PGPORT=... PGUSER=postgres npm test   # 314 tests
-cd link-erp && npm test                                         # 91 tests
+cd server   && PGHOST=... PGPORT=... PGUSER=postgres npm test   # 345 tests
+cd link-erp && npm test                                         # 104 tests
 
 # every step the CI workflow runs, here, against a real Postgres
 PGHOST=... PGPORT=... PGUSER=postgres ./scripts/ci-local.sh
@@ -125,6 +141,11 @@ What the suites cover:
 | `stockcount` | offline scan batches, six variance classes, second-person posting |
 | `onboarding-search` | owner-controlled master imports, atomic apply, tenant-wide linked search |
 | `mill-readiness` | kg/metre stock, kapat, realized brokerage, process-bill matching, Tally XML, PDF/WhatsApp outbox |
+| `commercial-foundation` | real-company bootstrap, permission profiles, branches, bill-wise openings |
+| `production-operations` | audited barcode opening stock, cross-godown transfers, exact reversal guards |
+| `milestone-two` | retained document evidence, file integrity, and atomic bulk opening-bill migration |
+| `platform` | typed custom fields, governed report builder, hashed integration keys and idempotent pull feeds |
+| `editions` | five parallel editions, 46 validated workflows, resources, average-cost stock, job costing, maker-checker, search and integration events |
 | `concurrency` | two users clicking at once — see below |
 | `hardening` | forged/rotated tokens, database-backed throttling, oversized documents |
 | `db-parser` | unsafe numeric/int8 values are refused before JavaScript can round them |
@@ -208,10 +229,25 @@ behind the department's back. Only the owner can unlock one.
 The owner onboarding workbench imports seven master types from
 Excel-compatible CSV: ledgers, qualities, HSN/SAC codes, grades, units, widths,
 and racks. Every file is previewed and cross-checked before an atomic apply;
-rejected rows and immutable batch history remain downloadable. This is master
-data onboarding, not an opening-balance or opening-stock conversion. Global
-operational search links matching pieces, parties, orders, dispatches,
-invoices, payments, GST notes, and e-way bills back to their exact screens.
+rejected rows and immutable batch history remain downloadable. **Home → Go-Live
+Readiness** separately records balanced opening books, bill-wise receivables and
+payables, and each physical opening-stock barcode with its godown, rack, metres,
+kilograms, stage, and carried value. Excel-compatible opening templates validate
+ledger and master references before an atomic post; stock rows remain staged for
+review and bill imports require an explicit confirmation. Opening data locks
+after the first posted voucher; it is not disguised as a purchase. Signed PDFs,
+JPEGs, and PNGs can be retained against invoices, payments, opening stock, and
+godown transfers with hashes and append-only add/remove events. Reports support
+personal saved filters, configurable visible columns, and matching CSV exports.
+Global operational search links
+matching pieces, parties, orders, dispatches, invoices, payments, GST notes,
+and e-way bills back to their exact screens.
+
+**Home → Customization & Integration Studio** is the shared extension layer:
+typed custom fields attach to real records, governed report sources produce
+reusable private/shared reports without accepting SQL, and tenant integration
+feeds publish idempotent document events behind one-time hashed credentials.
+See `docs/SHARED_PLATFORM.md` for the adapter contract and security model.
 
 ---
 

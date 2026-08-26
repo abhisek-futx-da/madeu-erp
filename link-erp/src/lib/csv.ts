@@ -3,6 +3,16 @@ export interface ParsedCsv {
   rows: Record<string, string>[];
 }
 
+export function readFileText(file: File): Promise<string> {
+  if (typeof file.text === 'function') return file.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.readAsText(file);
+  });
+}
+
 /** RFC-4180 CSV reader for files saved by Excel/LibreOffice. */
 export function parseCsv(input: string): ParsedCsv {
   const text = input.replace(/^\uFEFF/, '');
@@ -60,4 +70,13 @@ export function parseCsv(input: string): ParsedCsv {
     return Object.fromEntries(headers.map((header, column) => [header, columns[column] ?? '']));
   });
   return { headers, rows };
+}
+
+/** Small client-side templates/previews do not need a server round trip. */
+export function downloadCsv(filename:string,rows:Record<string,unknown>[]) {
+  const columns=rows[0]?Object.keys(rows[0]):[];
+  const quote=(value:unknown)=>{const text=String(value??'');return /[",\r\n]/.test(text)?`"${text.replaceAll('"','""')}"`:text;};
+  const body='\uFEFF'+[columns.map(quote).join(','),...rows.map(row=>columns.map(column=>quote(row[column])).join(','))].join('\r\n');
+  const url=URL.createObjectURL(new Blob([body],{type:'text/csv;charset=utf-8'}));
+  const anchor=document.createElement('a');anchor.href=url;anchor.download=filename.endsWith('.csv')?filename:`${filename}.csv`;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url);
 }

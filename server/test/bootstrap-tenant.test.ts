@@ -67,7 +67,7 @@ test('a real-mill bootstrap creates only the neutral, usable company foundation'
       [result.tenantId]
     );
     assert.deepEqual(counts.rows[0], {
-      controls: 24, ledgers: 27, roles: 27, units: 4, series: 29,
+      controls: 24, ledgers: 27, roles: 27, units: 4, series: 31,
       banks: 0, parties: 0, qualities: 0, tds: 0
     });
 

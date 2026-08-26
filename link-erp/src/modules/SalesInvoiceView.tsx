@@ -4,8 +4,10 @@ import { useApi, useSubmit } from '../lib/useApi';
 import { usePagedList } from '../lib/usePagedList';
 import { ListControls } from '../components/ListControls';
 import { api, type Page } from '../lib/api';
-import { AlertTriangle, CheckCircle2, Download, FileJson, Printer, Receipt, Truck, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileJson, Paperclip, Printer, Receipt, Settings2, Truck, X } from 'lucide-react';
 import { InvoicePrintView } from './InvoicePrintView';
+import { DocumentAttachments } from '../components/DocumentAttachments';
+import { CustomFieldsPanel } from '../components/CustomFieldsPanel';
 import type { Session } from '../lib/api';
 
 interface InvoiceRow {
@@ -45,6 +47,8 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
   const [printing, setPrinting] = useState<string | null>(null);
   const [distance, setDistance] = useState(500);
   const [ewayFor, setEwayFor] = useState<InvoiceRow | null>(null);
+  const [attachmentFor,setAttachmentFor]=useState<InvoiceRow|null>(null);
+  const [customFor,setCustomFor]=useState<InvoiceRow|null>(null);
 
   const raise = async (dispatchId: string) => {
     const out = await submit({ dispatchId, distanceKm: distance });
@@ -222,6 +226,8 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
                     <button onClick={() => showPayload(i)} className="erp-btn" title="View IRP payload">
                       <FileJson className="w-3.5 h-3.5 text-blue-600" />
                     </button>
+                    <button onClick={()=>setAttachmentFor(i)} className="erp-btn" title="Attach signed invoice, LR or customer evidence"><Paperclip className="h-3.5 w-3.5 text-blue-700"/></button>
+                    <button onClick={()=>setCustomFor(i)} className="erp-btn" title="Edit custom invoice fields"><Settings2 className="h-3.5 w-3.5 text-violet-700"/></button>
                     <button onClick={() => raiseEway(i)} disabled={ewayFor?.id === i.id}
                       className="erp-btn disabled:opacity-40"
                       title={i.ewb_no ? `E-way bill ${i.ewb_no}` : i.ewb_ref ? `E-way bill ${i.ewb_ref} prepared` : 'Prepare e-way bill (Rule 138)'}>
@@ -247,6 +253,8 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
       {printing && (
         <InvoicePrintView invoiceId={printing} session={session} onClose={() => setPrinting(null)} />
       )}
+      {attachmentFor&&<DocumentAttachments docType="sales_invoice" docId={attachmentFor.id} label={attachmentFor.invoice_no} onClose={()=>setAttachmentFor(null)}/>}
+      {customFor&&<CustomFieldsPanel entityType="sales_invoice" entityId={customFor.id} label={customFor.invoice_no} onClose={()=>setCustomFor(null)}/>}
 
       {payload && (
         <div className="absolute inset-0 bg-black/40 flex items-center justify-center p-8 z-50">

@@ -1,24 +1,25 @@
-# Release Evidence — 24 August 2026
+# Release Evidence — 27 August 2026
 
-**Local release candidate:** `v0.4.0-onboarding-rc1`. The tag anchors the verified
-source on this machine; no access-controlled remote is configured yet.
+**Local production-pilot candidate:** current working tree. Commit and sign an
+immutable release tag after review; the older `v0.4.0-onboarding-rc1` tag does
+not contain the commercial-foundation and production-operations additions.
 
 ## Status
 
-**Code-ready for controlled-pilot evaluation; not approved for statutory filing
-or broad production rollout.** This is a local, reproducible test snapshot,
-not a CA opinion, a mill acceptance, or a government integration result.
+**Software-ready for a controlled cloth-mill production pilot; not yet accepted
+for statutory filing or broad rollout.** This is reproducible engineering
+evidence, not a CA opinion, mill acceptance, or government-provider result.
 
 ## What was verified from a clean database build
 
-- 45 schema migrations applied and recorded; the migration ledger exactly
+- 51 schema migrations applied and recorded; the migration ledger exactly
   matches the migration files and every foreign key has a supporting index.
 - 20 database invariants passed.
-- 314 server tests passed with no skips, including tenant isolation, concurrent scans and
+- 345 server tests passed with no skips, including tenant isolation, concurrent scans and
   numbering, double-entry balancing, GST calculation, returns, cancellation,
   physical stock count, reprocessing, purchase orders, sales-order allocation,
   packing lists, bank reconciliation, and maker-checker approvals.
-- 91 frontend tests passed with no skips; the frontend typecheck and production
+- 104 frontend tests passed with no skips; the frontend typecheck and production
   build passed.
 - The desktop/mobile browser gate passed every applicable case: accessible
   shell and forms, deep links, mobile navigation, and every owner module
@@ -48,7 +49,8 @@ not a CA opinion, a mill acceptance, or a government integration result.
   be disabled or demoted.
 - The profile-gated real-mill bootstrap creates a clean legal entity atomically:
   named owner, system chart and posting ledgers, an open financial year,
-  document series, standard units, and mandatory stock-count approval. It
+  document series, standard units, and mandatory owner approval across all nine
+  financial/stock exception classes. It
   creates no demo stock, parties, bank account, HSN/SAC, rates, TDS rule, or
   accounting transaction; its duplicate-setup rollback is tested.
 - Migrations were exercised against a PostgreSQL server with no application
@@ -65,17 +67,60 @@ not a CA opinion, a mill acceptance, or a government integration result.
   codes, grades, units, widths, and racks from Excel-compatible CSV. It stages
   a preview, validates schema, duplicates and references, then applies the
   accepted rows once in a single transaction. Rejection reports and immutable
-  batch history are retained. It does not claim to migrate opening stock or
-  opening accounting balances.
+  batch history are retained. Opening books, bill-wise receivables/payables,
+  and physical barcode stock are entered through a separate guarded cutover
+  workflow, not through the master CSV importer.
 - Tenant-wide operational search finds pieces/barcodes/lots, parties, purchase
   and sales orders, dispatches, sales and purchase invoices, payments, GST
-  notes, and e-way bills, with ranked linked drilldown to the exact module.
+  notes, e-way bills, and all edition documents, with ranked linked drilldown
+  to the exact module.
 - The year-volume harness met every defined query budget with 150,000 pieces,
   465,000 movement records, 3,000 invoices, and 10,500 invoice lines. The RLS
   stock-status path measured 23.0 ms against its 300 ms budget after a targeted
   partial-index correction and passed twice more on the same dataset.
 
 ## Mill-floor and commercial controls now present
+
+- **Go-Live Readiness** gives the owner one cutover surface for company
+  locations, balanced opening books, bill-wise legacy outstandings, and audited
+  grey/finish opening stock. Each piece records barcode, quality, grade, lot,
+  metres, kilograms, rack, stage, and carried value without inventing a purchase
+  voucher. Opening stock and outstandings lock after the first posted voucher.
+- Opening books, bill-wise receivables/payables, and physical barcode stock have
+  Excel-compatible CSV templates and controlled import paths. Ledger/master
+  references, duplicates, quantities, values, and file limits are validated;
+  stock is staged for review and bill files post atomically after confirmation.
+- PDF/JPEG/PNG evidence is retained against invoices, payments, opening-stock
+  batches, and godown transfers. The server verifies actual file signatures,
+  caps files at 5 MB, stores SHA-256 hashes, prevents duplicate live evidence,
+  and records removal without deleting the bytes or append-only event trail.
+- Report users can save private filter/column layouts and export exactly the
+  filtered rows and currently visible columns.
+- The shared platform adds typed custom fields to real masters, documents, and
+  edition resources; reusable private or company reports over nine allow-listed sources, and
+  integration pull feeds with one-time hashed keys, tenant-scoped subscriptions,
+  idempotent delivery rows, acknowledgements, pausing and immediate rotation.
+  Report values are bound parameters and integrations cannot configure server-
+  side URLs. Definition/credential changes and business events remain audited.
+- Five independently controlled edition packs now run beside the cloth-trading
+  core: weaving, dyeing, exports, logistics, and garments. Their 46 validated
+  operational workflows have per-financial-year numbering, permission-gated
+  create/edit actions, guarded status transitions, immutable event history,
+  attachments, custom fields, CSV registers, shared report/search visibility,
+  and automatic create/status integration events. Typed resources connect the
+  workflows to an append-only average-cost stock subledger. Material and cost
+  lines calculate job cost; parent-document links retain process lineage; and
+  owner-selected workflows require approval by someone other than their maker.
+  Pausing one edition blocks new documents while preserving its existing record.
+- Users carry an active business location and a live permission profile whose
+  base role must match their membership. The active godown can be switched in
+  the shell; new racks and operational custody stay location-scoped.
+- **Godown Stock Transfers** scan or paste barcodes and move only custody and
+  rack. Database guards preserve stage, quantity, weight, and value; reversal is
+  allowed only while that transfer is still each piece's latest movement.
+- The pre-pilot data gate refuses demo identities, missing MFA/password change,
+  incomplete profiles/locations, unreconciled stock/openings/outstandings,
+  missing approvals, and any company where live posting already began.
 
 - Grey inward is scan-first and keyboard-operable, keeps an offline queue, can
   capture a paired scale, records gross/tare/net kilograms beside metres, and
@@ -125,10 +170,9 @@ not a CA opinion, a mill acceptance, or a government integration result.
 
 ## Do not claim these as complete
 
-1. **CA validation:** treatment, reports, opening accounting/stock migration,
-   and the mill’s actual facts require written CA review. Seven operational
-   master types now have a controlled import, but that is not an opening-book
-   conversion.
+1. **CA validation:** treatment, reports, and the mill’s actual opening facts
+   require written CA review. The guarded cutover records those facts; it cannot
+   decide whether the facts or accounting treatment are correct.
 2. **Live GSP/IRP/E-way:** no sandbox or production credential/provider round
    trip is proven by this evidence.
 3. **Mill-floor proof:** actual barcode/scale hardware, network loss, label calibration, staff
@@ -138,8 +182,8 @@ not a CA opinion, a mill acceptance, or a government integration result.
    agreed with the CA before filing.
 5. **Purchase brokerage treatment:** decide in writing whether each purchase
    brokerage class is expensed or capitalised before adding automatic posting.
-6. **Release governance:** push the exact local `v0.4.0-onboarding-rc1` tag to an
-   access-controlled remote repository before the CA review, and preserve a
+6. **Release governance:** commit this candidate, create a new signed immutable
+   tag, push it to an access-controlled remote before the CA review, and preserve a
    second, independent backup; a laptop-only history is not sufficient business
    continuity. This document is not evidence that either external copy exists.
 7. **Public deployment:** the supplied Compose file is an internal stack. A

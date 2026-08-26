@@ -13,10 +13,10 @@ async function signIn(page: Page) {
 }
 
 const OWNER_MODULES = [
-  'dashboard', 'global_search', 'approvals', 'password', 'company_setup', 'barcode_history', 'audit_trail',
+  'dashboard', 'global_search', 'approvals', 'password', 'company_setup', 'go_live_readiness', 'platform_studio', 'edition_weaving', 'edition_dyeing', 'edition_exports', 'edition_logistics', 'edition_garments', 'barcode_history', 'audit_trail',
   'ledgers', 'qualities', 'grades', 'hsn-codes', 'units', 'widths', 'racks', 'bank-accounts', 'users', 'data_onboarding',
   'purchase_orders', 'sales_orders', 'grey_inward', 'dyeing_issue', 'dyeing_receipt', 'reprocess', 'grey_return', 'dyeing_return',
-  'customer_return', 'write_off', 'cut_pack', 'regroup', 'stock_count', 'delivery_challans', 'labels',
+  'customer_return', 'write_off', 'cut_pack', 'regroup', 'stock_count', 'location_transfers', 'delivery_challans', 'labels',
   'dispatch', 'packing_lists', 'payments', 'bank_reconciliation', 'mill_integrations', 'sales_invoices', 'purchase_invoices', 'gst_notes', 'profit_loss',
   'balance_sheet', 'trial_balance', 'party_statement', 'receivable_ageing', 'outstanding_sales',
   'outstanding_purchases', 'party_balance', 'tds_summary', 'year_close', 'gstr1_b2b', 'gstr1_cdnr',
@@ -48,6 +48,37 @@ test('desktop shell, deep links, forms and setup are operable and accessible', a
   await expect(page.getByLabel('Financial year')).toBeVisible();
   const setupA11y = await new AxeBuilder({ page }).analyze();
   expect(setupA11y.violations.filter(v => ['critical', 'serious'].includes(v.impact ?? ''))).toEqual([]);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Go-Live Readiness' }).click();
+  await expect(page.getByRole('heading', { name: 'Commercial foundation gate' })).toBeVisible();
+  const cutoverA11y = await new AxeBuilder({ page }).analyze();
+  expect(cutoverA11y.violations.filter(v => ['critical', 'serious'].includes(v.impact ?? ''))).toEqual([]);
+
+  await page.evaluate(() => { window.location.hash = '#/trial_balance'; });
+  await expect(page.getByText('My saved reports')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export visible columns' })).toBeVisible();
+  await page.getByText(/Columns \(6\/6\)/).click();
+  await page.getByLabel('Control A/c').uncheck();
+  await expect(page.getByRole('columnheader', { name: 'Control A/c' })).toHaveCount(0);
+  const reportA11y = await new AxeBuilder({ page }).analyze();
+  expect(reportA11y.violations.filter(v => ['critical', 'serious'].includes(v.impact ?? ''))).toEqual([]);
+
+  await page.evaluate(() => { window.location.hash = '#/platform_studio'; });
+  await expect(page.getByRole('heading', { name: /Define one field/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Report builder' }).click();
+  await expect(page.getByRole('heading', { name: 'Safe report builder' })).toBeVisible();
+  await page.getByRole('button', { name: 'Integration feeds' }).click();
+  await expect(page.getByRole('heading', { name: 'Audited pull integrations' })).toBeVisible();
+  const platformA11y = await new AxeBuilder({ page }).analyze();
+  expect(platformA11y.violations.filter(v => ['critical', 'serious'].includes(v.impact ?? ''))).toEqual([]);
+
+  await page.evaluate(() => { window.location.hash = '#/edition_weaving'; });
+  await expect(page.getByRole('heading', { name: 'Weaving operations' })).toBeVisible();
+  await expect(page.getByLabel('Edition workflow')).toHaveValue('loom_plan');
+  await expect(page.getByRole('button', { name: 'Create draft' })).toBeVisible();
+  const editionA11y = await new AxeBuilder({ page }).analyze();
+  expect(editionA11y.violations.filter(v => ['critical', 'serious'].includes(v.impact ?? ''))).toEqual([]);
 });
 
 test('mobile navigation exposes every module without viewport clipping', async ({ page }, testInfo) => {
@@ -58,6 +89,11 @@ test('mobile navigation exposes every module without viewport clipping', async (
   await page.getByRole('button', { name: 'Menu' }).click();
   await expect(page.getByRole('button', { name: 'GSTR-1 B2B' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Company Setup & Controls' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Go-Live Readiness' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Customization & Integration Studio' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Weaving Edition' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Garments Edition' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Godown Stock Transfers' })).toBeVisible();
 
   const clipped = await page.locator('button:visible, input:visible, select:visible').evaluateAll(nodes =>
     nodes.map(node => {

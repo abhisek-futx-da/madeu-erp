@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Save, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Save, Trash2 } from 'lucide-react';
 import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { api, ApiError } from '../lib/api';
 import { useApi } from '../lib/useApi';
+import {downloadCsv,parseCsv,readFileText} from '../lib/csv';
 
 type Tab = 'books' | 'controls' | 'statutory';
 interface Year { label: string; status: string }
@@ -107,8 +108,10 @@ function OpeningBooks({ years, fy, setFy, rows, setRows, totals, drift, loading,
   setRows: React.Dispatch<React.SetStateAction<Opening[]>>;
   totals: { debit: number; credit: number }; drift: number; loading: boolean; busy: boolean; onSave: () => void;
 }) {
+  const[importError,setImportError]=useState('');
   const change = (i: number, side: 'debit' | 'credit', value: number) => setRows(prev => prev.map((r, n) =>
     n === i ? { ...r, [side]: value, [side === 'debit' ? 'credit' : 'debit']: value > 0 ? 0 : r[side === 'debit' ? 'credit' : 'debit'] } : r));
+  const importFile=async(file?:File)=>{if(!file)return;setImportError('');try{const parsed=parseCsv(await readFileText(file));const required=['ledger_code','debit','credit'];if(required.some(header=>!parsed.headers.includes(header)))throw new Error(`required columns: ${required.join(', ')}`);const seen=new Set<string>();const values=new Map<string,{debit:number;credit:number}>();for(const [index,row] of parsed.rows.entries()){const code=row.ledger_code?.trim().toUpperCase()??'';if(!rows.some(ledger=>ledger.code.toUpperCase()===code))throw new Error(`row ${index+2}: unknown balance-sheet ledger ${code}`);if(seen.has(code))throw new Error(`row ${index+2}: duplicate ledger ${code}`);seen.add(code);const debit=Number(row.debit||0),credit=Number(row.credit||0);if(!Number.isFinite(debit)||!Number.isFinite(credit)||debit<0||credit<0||(debit>0&&credit>0))throw new Error(`row ${index+2}: enter a non-negative debit or credit, not both`);values.set(code,{debit,credit});}setRows(current=>current.map(ledger=>({...ledger,...(values.get(ledger.code.toUpperCase())??{debit:0,credit:0})})));}catch(error){setImportError(error instanceof Error?error.message:String(error));}};
   return <section className="space-y-3" aria-labelledby="opening-title">
     <div className="bg-white border border-[#b8c9dd] rounded p-4">
       <h2 id="opening-title" className="text-sm font-bold text-blue-950">CA-approved opening balances</h2>
@@ -118,6 +121,7 @@ function OpeningBooks({ years, fy, setFy, rows, setRows, totals, drift, loading,
           {years.map(y => <option key={y.label} value={y.label}>{y.label} — {y.status}</option>)}
         </select>
       </label>
+      <div className="mt-3 flex flex-wrap gap-2"><button className="erp-btn min-h-11" onClick={()=>downloadCsv(`opening-books-${fy}.csv`,rows.map(row=>({ledger_code:row.code,debit:row.debit||'',credit:row.credit||''})))}><Download className="h-4 w-4"/>Download opening-book CSV</button><label className="erp-btn min-h-11 cursor-pointer"><FileSpreadsheet className="h-4 w-4"/>Load completed opening-book CSV<input className="sr-only" type="file" accept=".csv,text/csv" onChange={event=>void importFile(event.target.files?.[0])}/></label>{importError&&<span role="alert" className="self-center font-semibold text-red-700">{importError}</span>}</div>
     </div>
     <div className="bg-white border border-[#b8c9dd] rounded overflow-x-auto">
       <table className="w-full min-w-[760px]">

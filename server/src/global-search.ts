@@ -121,6 +121,25 @@ export function globalSearchRouter() {
              from eway_bill e
             where e.our_ref ilike $1 escape '\\' or e.ewb_no ilike $1 escape '\\'
                or e.doc_no ilike $1 escape '\\' or e.vehicle_no ilike $1 escape '\\'
+           union all
+           select 'edition_document',d.id::text,d.doc_no,
+                  concat_ws(' · ',initcap(d.edition),replace(d.doc_type,'_',' '),d.doc_date::text,nullif(d.remarks,'')),
+                  'edition_'||d.edition,d.doc_no,d.status,d.created_at,
+                  case when lower(d.doc_no)=lower($2) then 0
+                       when d.doc_no ilike $3 escape '\\' then 1 else 2 end
+             from edition_document d
+            where d.doc_no ilike $1 escape '\\' or d.doc_type ilike $1 escape '\\'
+               or d.edition ilike $1 escape '\\' or d.remarks ilike $1 escape '\\'
+               or d.payload::text ilike $1 escape '\\'
+           union all
+           select 'edition_resource',r.id::text,r.code||' — '||r.name,
+                  concat_ws(' · ',initcap(r.edition),replace(r.resource_type,'_',' '),r.uom),
+                  'edition_'||r.edition,r.code,case when r.is_active then 'active' else 'inactive' end,r.updated_at,
+                  case when lower(r.code)=lower($2) then 0
+                       when r.code ilike $3 escape '\\' then 1 else 2 end
+             from edition_resource r
+            where r.code ilike $1 escape '\\' or r.name ilike $1 escape '\\'
+               or r.resource_type ilike $1 escape '\\' or r.payload::text ilike $1 escape '\\'
          ), ranked as (
            select matches.*,row_number() over (partition by kind order by rank,occurred_on desc nulls last) n
              from matches

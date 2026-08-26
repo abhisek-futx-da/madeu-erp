@@ -30,8 +30,10 @@ export function documentRouter() {
   const router = Router();
 
   const withCtx = <T>(req: any, fn: (ctx: Ctx) => Promise<T>) => {
-    const { tenantId, userId } = req.session!;
-    return withTenant(tenantId, userId, db => fn({ db, tenantId, userId, fy: fyLabel() }));
+    const { tenantId, userId, activeLocationId } = req.session!;
+    return withTenant(tenantId, userId, db => fn({
+      db, tenantId, userId, activeLocationId, fy: fyLabel()
+    }));
   };
 
   const listRoute = (path: string, name: string, spec: ListSpec) =>
