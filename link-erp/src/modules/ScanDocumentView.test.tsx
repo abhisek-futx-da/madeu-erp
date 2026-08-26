@@ -1,55 +1,117 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { ScanDocumentView } from './ScanDocumentView';
 
-const CUSTOMER = '00000000-0000-0000-0000-000000000601';
-const CONTROL = '00000000-0000-0000-0000-000000000602';
-const ORDER_LINE = '00000000-0000-0000-0000-000000000603';
-const sent: { path: string; body: any }[] = [];
+/**
+ * The screen a storekeeper spends the day on, and — until now — the only floor
+ * screen with no tests at all.
+ *
+ * Two things matter here and neither is layout. A barcode that is not eligible
+ * for this document must be refused at the scanner, before the operator has
+ * walked anywhere; and the same thaan must never appear twice on one challan.
+ * Both are cheaper to catch here than in the server's error banner.
+ */
 
-beforeEach(() => {
-  sent.length = 0;
-  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-    const pathWithQuery = String(url).replace(/^.*\/api/, '');
-    const path = pathWithQuery.split('?')[0]!;
-    if (init?.method === 'POST') {
-      sent.push({ path, body: JSON.parse(String(init.body ?? '{}')) });
-      return { ok: true, status: 201, headers: new Headers(), text: async () => JSON.stringify({
-        id: 'dispatch', challanNo: 'DC/26-27/80', pieces: 1, value: 8075
-      }) } as Response;
-    }
-    const bodies: Record<string, unknown> = {
-      '/ledgers': [{ id: CUSTOMER, name: 'Supreme Garments', control_account_id: CONTROL, code: '701' }],
-      '/control-accounts': [{ id: CONTROL, nature: 'sundry_debtor_finish' }],
-      '/pieces': [{ id: 'piece', barcode: 'SO0001', status: 'received_finish', lot_no: 'LOT-SO',
-        grade_code: 'A', uom: 'MTR', rack_code: null, grey_qty: 100, finish_qty: 95,
-        current_qty: 95, cost: 4700, quality: 'Galaxy', design: null, held_by: null }],
-      '/sales-invoices': { rows: [], total: 0, limit: 50, offset: 0 },
-      '/sales-orders': { rows: [{ id: 'order', order_no: 'SO/26-27/8', party_id: CUSTOMER,
-        status: 'approved', lines: [{ id: ORDER_LINE, sno: 1, quality: 'Galaxy', grade_code: 'A',
-          qty: 500, dispatched_qty: 100, rate: 85 }] }], total: 1, limit: 100000, offset: 0 }
-    };
-    return { ok: true, status: 200, headers: new Headers(),
-      text: async () => JSON.stringify(bodies[path] ?? []) } as Response;
-  }));
+const PIECE = (barcode: string) => ({
+  id: `id-${barcode}`, barcode, status: 'grey_in_stock', lot_no: '1100/B',
+  grade_code: 'LUMP', uom: 'MTR', rack_code: 'A1', grey_qty: 100, finish_qty: null,
+  current_qty: 100, cost: 3000, quality: 'Galaxy', design: null, held_by: null
 });
 
-describe('ScanDocumentView dispatch allocation', () => {
-  test('auto-allocates a matching open sales-order line and posts its locked rate', async () => {
-    render(<ScanDocumentView kind="dispatch" />);
-    await screen.findByRole('option', { name: 'Supreme Garments' });
-    fireEvent.change(screen.getByLabelText(/Customer/), { target: { value: CUSTOMER } });
-    fireEvent.change(screen.getByLabelText(/Challan No/), { target: { value: 'DC-CLIENT-80' } });
-    fireEvent.change(screen.getByLabelText('Scan barcode'), { target: { value: 'SO0001' } });
-    fireEvent.submit(screen.getByLabelText('Scan barcode').closest('form')!);
+const routes: Record<string, unknown> = {};
 
-    const allocation = await screen.findByLabelText('Sales order for SO0001');
-    expect(allocation).toHaveValue(ORDER_LINE);
-    expect(screen.getByText('85.00')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Post Challan' }));
+function mockApi(over: Record<string, unknown> = {}) {
+  Object.keys(routes).forEach(k => delete routes[k]);
+  Object.assign(routes, {
+    '/ledgers': [{ id: 'l1', name: 'Prayag Texprint Llp', control_account_id: 'c1' }],
+    '/control-accounts': [{ id: 'c1', nature: 'sundry_creditor_process' }],
+    '/pieces': [PIECE('NKT001'), PIECE('NKT002')],
+    '/sales-orders': { rows: [] },
+    '/sales-invoices': { rows: [] },
+    ...over
+  });
 
-    await waitFor(() => expect(sent.length).toBe(1));
-    expect(sent[0]).toEqual(expect.objectContaining({ path: '/dispatches' }));
-    expect(sent[0]!.body.lines).toEqual([{ barcode: 'SO0001', rate: 85, soLineId: ORDER_LINE }]);
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const bare = String(url).replace(/^.*\/api/, '').split('?')[0]!;
+    return {
+      ok: true, status: 200, headers: new Headers(),
+      text: async () => JSON.stringify(routes[bare] ?? [])
+    } as unknown as Response;
+  }));
+}
+
+const scanBox = () => screen.getByLabelText(/Scan barcode/i);
+
+beforeEach(() => mockApi());
+
+describe('scanning pieces onto a challan', () => {
+  test('a scanned piece is added to the challan', async () => {
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.change(scanBox(), { target: { value: 'NKT001' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() => expect(screen.getByText('NKT001')).toBeInTheDocument());
+    expect(screen.getByText(/Pieces: 1/)).toBeInTheDocument();
+  });
+
+  test('the Add button works as well as the Enter key, for a gloved thumb', async () => {
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.change(scanBox(), { target: { value: 'NKT001' } });
+    fireEvent.submit(scanBox().closest('form')!);
+    await waitFor(() => expect(screen.getByText(/Pieces: 1/)).toBeInTheDocument());
+
+    fireEvent.change(scanBox(), { target: { value: 'NKT002' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(screen.getByText(/Pieces: 2/)).toBeInTheDocument());
+  });
+
+  test('the same thaan cannot be put on one challan twice', async () => {
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    for (let i = 0; i < 2; i++) {
+      fireEvent.change(scanBox(), { target: { value: 'NKT001' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    }
+
+    await waitFor(() =>
+      expect(screen.getByText(/NKT001 is already on this challan/)).toBeInTheDocument());
+    expect(screen.getByText(/Pieces: 1/)).toBeInTheDocument();
+  });
+
+  test('a barcode not eligible for this document is refused at the scanner', async () => {
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.change(scanBox(), { target: { value: 'GHOST9' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/GHOST9 is not available for this document/)).toBeInTheDocument());
+    expect(screen.getByText(/Pieces: 0/)).toBeInTheDocument();
+  });
+
+  test('an empty scan does nothing rather than adding a blank line', async () => {
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(screen.getByText(/Pieces: 0/)).toBeInTheDocument();
+  });
+
+  test('a scanned piece can be taken off again', async () => {
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.change(scanBox(), { target: { value: 'NKT001' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(screen.getByText(/Pieces: 1/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Remove NKT001/ }));
+    await waitFor(() => expect(screen.getByText(/Pieces: 0/)).toBeInTheDocument());
   });
 });
