@@ -53,6 +53,9 @@ export LOG_REQUESTS=false
 # of unrelated test outcomes; login throttling remains at its real setting.
 export RATE_LIMIT_PER_MINUTE="${RATE_LIMIT_PER_MINUTE:-10000}"
 export RATE_LIMIT_MODE="${RATE_LIMIT_MODE:-database}"
+# Metrics refuse to serve without a token, so the suite has to configure one
+# before it can prove either the refusal or the numbers.
+export METRICS_TOKEN="${METRICS_TOKEN:-test-only-metrics-token}"
 
 echo "==> starting the api on :${PORT}"
 node --experimental-strip-types "${SERVER}/src/index.ts" > /tmp/link-erp-test-api.log 2>&1 &

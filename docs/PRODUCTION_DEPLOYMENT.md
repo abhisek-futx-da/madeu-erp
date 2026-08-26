@@ -112,6 +112,13 @@ anti-framing, referrer, and permissions headers.
    older than the database server.
 10. Prove the copy restores into a different database using
    `./scripts/verify-backup-restore.sh`.
+10a. Set `METRICS_TOKEN` and schedule both monitors from a machine that is not
+   this one: `./scripts/monitor-health.sh` every minute (is it up) and
+   `./scripts/monitor-alerts.sh` every fifteen (is anything piling up that a
+   person was supposed to deal with). Uptime alone will not tell you that a
+   dyeing house has held forty thaans unacknowledged for three weeks.
+10b. Read `docs/INCIDENT_RUNBOOK.md` once before go-live, with the person who
+   will actually answer the phone at two in the morning.
 11. Record the release revision, migration count, bootstrap result, pilot-data
    gate result, backup
    timestamp, restore result, full `scripts/ci-local.sh` result, and the people

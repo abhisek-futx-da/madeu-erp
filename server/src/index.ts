@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import { buildRoutes } from './routes.ts';
 import { buildPortalRoutes } from './portal-routes.ts';
+import { observeRequest, renderMetrics } from './metrics.ts';
 import { pool } from './db.ts';
 import { pruneAuthState } from './auth.ts';
 import { consumeRateLimit, pruneRateLimits } from './rate-limit.ts';
@@ -92,7 +93,7 @@ const hits = new Map<string, { n: number; until: number }>();
 
 app.use(async (req, res, next) => {
   // Monitoring must still be able to report an overloaded API as alive.
-  if (req.path === '/health') return next();
+  if (req.path === '/health' || req.path === '/metrics') return next();
   const now = Date.now();
   const key = req.ip ?? 'unknown';
 
@@ -126,10 +127,11 @@ app.use(async (req, res, next) => {
 // One line per request, parseable, no bodies — an ERP logs who did what, not what.
 const LOG = process.env.LOG_REQUESTS !== 'false';
 app.use((req, res, next) => {
-  if (!LOG) return next();
   const started = process.hrtime.bigint();
   res.on('finish', () => {
     const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    observeRequest(req.method, res.statusCode, ms);
+    if (!LOG) return;
     console.log(JSON.stringify({
       t: new Date().toISOString(), method: req.method, path: req.path,
       status: res.statusCode, ms: Math.round(ms),
@@ -149,6 +151,26 @@ app.get('/health', async (_req, res) => {
   } catch {
     res.status(503).json({ ok: false });
   }
+});
+
+/**
+ * Metrics are not public. The backlog gauges say how much a mill has waiting
+ * and how far behind it is, which is commercial information — so the endpoint
+ * requires a token, and refuses outright when none is configured rather than
+ * defaulting to open. Set METRICS_TOKEN and give it to the monitor only.
+ */
+const METRICS_TOKEN = process.env.METRICS_TOKEN ?? '';
+app.get('/metrics', async (req, res) => {
+  if (!METRICS_TOKEN) {
+    return res.status(404).json({ error: 'metrics are not enabled; set METRICS_TOKEN' });
+  }
+  const offered = req.get('authorization')?.replace(/^Bearer /, '') ?? '';
+  // Constant-time-ish: compare full strings of equal length only.
+  if (offered.length !== METRICS_TOKEN.length || offered !== METRICS_TOKEN) {
+    return res.status(401).json({ error: 'metrics require the monitoring token' });
+  }
+  res.setHeader('content-type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.send(await renderMetrics());
 });
 
 // Mounted before the mill's API so no `/api/:resource` wildcard can ever
