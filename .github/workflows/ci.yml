@@ -42,8 +42,8 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
 
-      - name: Install psql
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: Install database and backup clients
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client gnupg
 
       - run: npm ci
         working-directory: server
