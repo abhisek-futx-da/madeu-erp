@@ -334,18 +334,31 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
           )}
         </div>
 
-        <form onSubmit={add} className="bg-white rounded border border-[#b8c9dd] p-3 flex items-center gap-2">
-          <QrCode className="w-4 h-4 text-blue-700" />
-          <label className="font-bold text-blue-900" htmlFor="scan">Scan barcode</label>
-          <input id="scan" autoFocus value={scan} onChange={e => setScan(e.target.value)}
-                 placeholder="scan or type, then Enter" className="erp-input font-mono w-64" />
-          <span className="text-slate-500">
+        {/* The most-used control on the floor, and the one most often reached
+            for on a phone with one hand. Full width and thumb-sized on a
+            small screen; unchanged at a desk. */}
+        <form onSubmit={add} className="bg-white rounded border-2 border-blue-300 p-3
+                                        flex flex-wrap items-end gap-2">
+          <div className="flex-1 min-w-[220px]">
+            <label className="font-bold text-blue-900 flex items-center gap-1.5 mb-1" htmlFor="scan">
+              <QrCode className="w-4 h-4 text-blue-700" />Scan barcode
+            </label>
+            <input id="scan" autoFocus inputMode="text" autoComplete="off"
+                   value={scan} onChange={e => setScan(e.target.value)}
+                   placeholder="scan or type, then Enter"
+                   className="erp-input font-mono w-full text-base py-3 md:text-xs md:py-1" />
+          </div>
+          <button type="submit" className="erp-btn erp-btn-primary min-h-11 px-5 md:min-h-0">
+            Add
+          </button>
+          <span className="text-slate-500 basis-full md:basis-auto md:self-center">
             {(eligible.data ?? []).length} pieces eligible
           </span>
         </form>
 
         <div className="bg-white rounded border border-[#b8c9dd] overflow-hidden">
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[36rem]">
             <thead className="bg-slate-100 border-b border-slate-300 text-left">
               <tr>
                 <th className="px-2 py-1.5 font-bold">Sno</th>
@@ -395,22 +408,27 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
                   </td>}
                   <td className="px-2 py-1 text-right">
                     <button onClick={() => setLines(prev => prev.filter((_, j) => j !== i))}
-                            title="Remove line" className="text-red-600 hover:text-red-800">
-                      <Trash2 className="w-3.5 h-3.5" />
+                            title="Remove line" aria-label={`Remove ${l.barcode}`}
+                            className="text-red-600 hover:text-red-800 min-h-11 min-w-11
+                                       inline-flex items-center justify-center md:min-h-0 md:min-w-0">
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div className="bg-slate-50 border-t border-slate-300 px-3 py-2 flex items-center justify-end gap-6 font-bold">
+          </div>
+          <div className="bg-slate-50 border-t border-slate-300 px-3 py-2 flex flex-wrap
+                          items-center justify-end gap-3 md:gap-6 font-bold">
             <span>Pieces: {lines.length}</span>
             <span>Qty: {total.qty.toFixed(2)}</span>
             {spec.needsRate
               ? <span>Value: ₹{total.value.toFixed(2)}</span>
               : <span className="text-slate-600">Value is taken from the locked stock or original invoice</span>}
             <button onClick={save} disabled={busy}
-                    className="erp-btn erp-btn-primary font-bold disabled:opacity-60">
+                    className="erp-btn erp-btn-primary font-bold disabled:opacity-60
+                               min-h-11 px-5 basis-full md:basis-auto md:min-h-0 justify-center">
               {busy ? 'Posting…' : 'Post Challan'}
             </button>
           </div>
