@@ -17,6 +17,7 @@ import { listQuery, paged, sendCsv, type ListSpec } from './listing.ts';
 import { operationalReportRouter } from './report-routes.ts';
 import { approveDocument, rejectDocument } from './approvals.ts';
 import { splitPiece, mergePieces, lineageOf } from './regroup.ts';
+import { answerDeclaration, createPortalUser } from './portal.ts';
 import {
   openCount, addScans, removeScan, exceptionsFor, submitCount, applyStockCount
 } from './stockcount.ts';
@@ -960,6 +961,113 @@ export function buildRoutes() {
     search: ['s.count_no', 's.reason', 's.rack_code'],
     dateColumn: 's.count_date',
     orderBy: 's.count_date desc, s.count_no desc'
+  });
+
+  // ------------------------------------------------------- process houses --
+
+  api.get('/party-declarations', async (req, res, next) => {
+    try {
+      const q = z.object({
+        state: z.enum(['submitted', 'accepted', 'rejected', 'all']).default('submitted')
+      }).parse(req.query);
+      const { tenantId, userId } = req.session!;
+      const rows = await withTenant(tenantId, userId, db =>
+        many(db,
+          `select * from v_party_declaration_inbox
+            where ($1::text = 'all' or state = $1::text)
+            order by declared_at desc limit 500`,
+          [q.state]));
+      res.json(rows);
+    } catch (e) { next(e); }
+  });
+
+  api.get('/party-declarations/:id', async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const { tenantId, userId } = req.session!;
+      const out = await withTenant(tenantId, userId, async db => ({
+        declaration: await one(db,
+          'select * from v_party_declaration_inbox where declaration_id = $1', [id]),
+        lines: await many(db,
+          `select l.barcode, l.qty, l.reason, q.name as quality, p.lot_no, p.current_qty
+             from party_declaration_line l
+             left join piece p on p.id = l.piece_id
+             left join quality q on q.id = p.quality_id
+            where l.declaration_id = $1 order by l.barcode`, [id]),
+        history: await many(db,
+          `select e.state::text as state, e.note, e.created_at, u.full_name as actor
+             from party_declaration_event e
+             left join app_user u on u.id = e.actor_id
+            where e.declaration_id = $1 order by e.id`, [id])
+      }));
+      if (!out.declaration) return res.status(404).json({ error: 'no such declaration' });
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  /**
+   * Answering is a store decision: it is a statement about goods, not about
+   * money, and the storekeeper is the person who knows whether four thaans
+   * really did come back damaged.
+   */
+  api.post('/party-declarations/:id/:answer', requireWrite('store'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const answer = z.enum(['accept', 'reject']).parse(req.params.answer);
+      const body = z.object({ note: z.string().max(300).default('') }).parse(req.body ?? {});
+      const { tenantId, userId } = req.session!;
+      const out = await withTenant(tenantId, userId, db =>
+        answerDeclaration(
+          { db, tenantId, userId }, id,
+          answer === 'accept' ? 'accepted' : 'rejected', body.note
+        ));
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  /** Giving a process house a login of its own, and taking it away again. */
+  api.get('/portal-users', requireWrite('owner'), async (req, res, next) => {
+    try {
+      const { tenantId, userId } = req.session!;
+      res.json(await withTenant(tenantId, userId, db =>
+        many(db,
+          `select p.user_id, u.email, u.full_name, u.is_active as account_active,
+                  p.party_id, l.name as party, p.is_active, p.created_at
+             from party_portal_user p
+             join app_user u on u.id = p.user_id
+             join ledger_account l on l.id = p.party_id
+            order by l.name`)));
+    } catch (e) { next(e); }
+  });
+
+  api.post('/portal-users', requireWrite('owner'), async (req, res, next) => {
+    try {
+      const body = z.object({
+        email: z.string().email().max(120),
+        fullName: z.string().trim().min(1).max(120),
+        partyId: uuid,
+        password: z.string().min(12).max(200)
+      }).parse(req.body);
+      const { tenantId, userId } = req.session!;
+      const out = await withTenant(tenantId, userId, db =>
+        createPortalUser({ db, tenantId, userId }, body));
+      res.status(201).json(out);
+    } catch (e) { next(e); }
+  });
+
+  api.post('/portal-users/:id/disable', requireWrite('owner'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const { tenantId, userId } = req.session!;
+      const out = await withTenant(tenantId, userId, async db => {
+        const gone = await db.query(
+          'update party_portal_user set is_active = false where user_id = $1', [id]
+        );
+        if (gone.rowCount === 0) throw new Error('no such process-house login');
+        return { userId: id, disabled: true };
+      });
+      res.json(out);
+    } catch (e) { next(e); }
   });
 
   api.get('/pieces/:barcode/history', async (req, res, next) => {

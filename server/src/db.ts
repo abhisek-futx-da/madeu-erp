@@ -79,6 +79,25 @@ export async function withTenant<T>(
   }
 }
 
+/**
+ * The same transaction plus `app.party_id`, which every `v_portal_*` view
+ * narrows on. The party comes from the verified session and never from the
+ * request: an outside login that could name its own party could read the whole
+ * godown. When the setting is absent those views match nothing, so the failure
+ * mode is an empty portal rather than somebody else's goods.
+ */
+export async function withParty<T>(
+  tenantId: string,
+  partyId: string,
+  userId: string | null,
+  fn: (db: Db) => Promise<T>
+): Promise<T> {
+  return withTenant(tenantId, userId, async db => {
+    await db.query('select set_config($1, $2, true)', ['app.party_id', partyId]);
+    return fn(db);
+  });
+}
+
 /** Auth only: reaches app_user, which is deliberately not tenant-scoped. */
 export async function withoutTenant<T>(fn: (db: Db) => Promise<T>): Promise<T> {
   const client = await pool.connect();

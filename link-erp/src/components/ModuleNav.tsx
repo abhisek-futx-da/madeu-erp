@@ -64,6 +64,7 @@ export const NAV: NavGroup[] = [
       { id: 'cut_pack', label: 'Cut / Pack' },
       { id: 'regroup', label: 'Split / Join Thaan' },
       { id: 'stock_count', label: 'Physical Stock Count' },
+      { id: 'process_houses', label: 'Process Houses' },
       { id: 'location_transfers', label: 'Godown Stock Transfers' },
       { id: 'delivery_challans', label: 'Delivery Challans (Rule 55)' },
       { id: 'labels', label: 'Barcode Labels' },

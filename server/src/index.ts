@@ -3,6 +3,7 @@ import cors from 'cors';
 import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import { buildRoutes } from './routes.ts';
+import { buildPortalRoutes } from './portal-routes.ts';
 import { pool } from './db.ts';
 import { pruneAuthState } from './auth.ts';
 import { consumeRateLimit, pruneRateLimits } from './rate-limit.ts';
@@ -150,6 +151,9 @@ app.get('/health', async (_req, res) => {
   }
 });
 
+// Mounted before the mill's API so no `/api/:resource` wildcard can ever
+// shadow a portal route and hand an outside login a staff endpoint.
+app.use('/api/portal', buildPortalRoutes());
 app.use('/api', buildRoutes());
 
 // An API answers in JSON even when the route does not exist; Express's default

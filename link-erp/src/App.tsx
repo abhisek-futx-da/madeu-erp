@@ -26,6 +26,7 @@ import { Itc04View } from './modules/Itc04View';
 import { EwayBillView } from './modules/EwayBillView';
 import { PieceRegroupView } from './modules/PieceRegroupView';
 import { StockCountView } from './modules/StockCountView';
+import { ProcessHouseInboxView } from './modules/ProcessHouseInboxView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { OfflineBadge } from './components/OfflineBadge';
 import { PasswordView } from './modules/PasswordView';
@@ -171,6 +172,7 @@ export const App: React.FC = () => {
       {module === 'cut_pack' && <ScanDocumentView kind="pack" />}
       {module === 'regroup' && <PieceRegroupView session={session} />}
       {module === 'stock_count' && <StockCountView />}
+      {module === 'process_houses' && <ProcessHouseInboxView session={session} />}
       {module === 'location_transfers' && <LocationTransferView session={session} />}
       {module === 'dispatch' && <ScanDocumentView kind="dispatch" />}
       {module === 'packing_lists' && <PackingListView />}
