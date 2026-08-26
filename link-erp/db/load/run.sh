@@ -20,7 +20,14 @@ if [ "${SKIP_BUILD:-}" != "true" ]; then
   echo "==> building ${DB} at volume (this takes a minute)"
   "${HERE}/../rebuild.sh" "${DB}" > /tmp/load-build.log 2>&1 || {
     tail -20 /tmp/load-build.log; exit 1; }
-  psql -q -v ON_ERROR_STOP=1 -d "${DB}" -f "${HERE}/generate.sql" 2>&1 | grep -E '^ *[0-9]+ \|' || true
+  # Do not put psql behind a cosmetic grep with `|| true`: that once converted
+  # a failed generator into a green performance run over an empty database.
+  if ! GENERATED="$(psql -q -v ON_ERROR_STOP=1 -d "${DB}" -f "${HERE}/generate.sql" 2>&1)"; then
+    printf '%s\n' "${GENERATED}" >&2
+    echo "the volume dataset was not generated" >&2
+    exit 1
+  fi
+  printf '%s\n' "${GENERATED}" | grep -E '^ *[0-9]+ \|' || true
 fi
 
 # Budgets in milliseconds. A clerk scanning a barcode waits on the first two
@@ -54,8 +61,13 @@ for check in "${CHECKS[@]}"; do
   # random. The median still moves if a query genuinely gets slower.
   times=""
   for run in 0 1 2 3; do
-    ms="$(PGUSER=link_erp_app psql -tAq -d "${DB}" \
-      -c "set app.tenant_id='11111111-1111-1111-1111-111111111111';" \
+    # CI authenticates with the administrator password. Connecting directly as
+    # link_erp_app therefore fails before the first timing on a clean runner.
+    # Assume the restricted role inside the authenticated session instead: the
+    # query still runs with application grants and RLS, without inventing or
+    # leaking a second database credential into the workflow.
+    ms="$(psql -v ON_ERROR_STOP=1 -tAq -d "${DB}" \
+      -c "set role link_erp_app; set app.tenant_id='11111111-1111-1111-1111-111111111111';" \
       -c "\timing on" -c "${sql}" 2>&1 | grep -oE 'Time: [0-9.]+' | tail -1 | cut -d' ' -f2)"
     [ "${run}" -gt 0 ] && times="${times}${ms:-99999}"$'\n'
   done
@@ -70,8 +82,8 @@ for check in "${CHECKS[@]}"; do
 done
 
 echo ""
-PGUSER=link_erp_app psql -tAq -d "${DB}" \
-  -c "set app.tenant_id='11111111-1111-1111-1111-111111111111';" \
+psql -v ON_ERROR_STOP=1 -tAq -d "${DB}" \
+  -c "set role link_erp_app; set app.tenant_id='11111111-1111-1111-1111-111111111111';" \
   -c "select 'volume: ' || (select count(*) from piece) || ' pieces, '
              || (select count(*) from piece_movement) || ' movements, '
              || (select count(*) from sales_invoice) || ' invoices, '
