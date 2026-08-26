@@ -237,6 +237,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
   claims = verified;
 
+  // A process-house token opens the portal and nothing else. Without this the
+  // outside login would inherit whatever the staff routes allow.
+  if ((claims as { aud?: string }).aud === 'portal') {
+    res.status(403).json({ error: 'a process-house sign-in cannot use the mill application' });
+    return;
+  }
+
   try {
     const state = await withoutTenant(db =>
       one<{
