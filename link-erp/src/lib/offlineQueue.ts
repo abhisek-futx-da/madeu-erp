@@ -18,6 +18,14 @@ export interface QueuedScan {
   queuedAt: number;
   attempts: number;
   lastError?: string;
+  /**
+   * Set when the server judged the document rather than the network failing.
+   * Held items are skipped by every later flush: without this the queue
+   * re-sent the same rejected scan every minute, collecting the identical 4xx
+   * forever and burying the real problem under a growing attempt count.
+   */
+  heldForReview?: boolean;
+  heldAt?: number;
 }
 
 function open(): Promise<IDBDatabase> {
@@ -51,10 +59,31 @@ export const enqueue = async (path: string, body: unknown): Promise<QueuedScan> 
   return item;
 };
 
-export const pending = () => tx<QueuedScan[]>('readonly', s => s.getAll());
+const all = () => tx<QueuedScan[]>('readonly', s => s.getAll());
+
+/** Waiting to be sent. Excludes anything a person has to look at first. */
+export const pending = async () => (await all()).filter(i => !i.heldForReview);
+
+/** Refused by the server, waiting for a human decision. */
+export const heldForReview = async () => (await all()).filter(i => i.heldForReview);
+
 export const forget = (id: string) => tx('readwrite', s => s.delete(id));
 
 const update = async (item: QueuedScan) => tx('readwrite', s => s.put(item));
+
+/**
+ * Puts a held scan back in the queue. An operator decision — they have fixed
+ * the master, or the document it collided with has been cancelled.
+ */
+export async function retryHeld(id: string): Promise<boolean> {
+  const item = (await all()).find(i => i.id === id);
+  if (!item) return false;
+  await update({ ...item, heldForReview: false, heldAt: undefined, lastError: undefined });
+  return true;
+}
+
+/** Throws a held scan away. The piece was never recorded, so nothing is undone. */
+export const discardHeld = (id: string) => forget(id);
 
 export interface FlushResult {
   sent: number;
@@ -81,6 +110,9 @@ export async function flush(): Promise<FlushResult> {
       item.lastError = e instanceof Error ? e.message : String(e);
 
       if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429) {
+        // The server judged it; sending it again will produce the same answer.
+        item.heldForReview = true;
+        item.heldAt = Date.now();
         result.rejected.push(item);
         await update(item);
       } else {

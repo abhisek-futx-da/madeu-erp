@@ -48,6 +48,7 @@ const signedIn = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   try { sessionStorage.clear(); } catch { /* jsdom without storage */ }
+  try { localStorage.clear(); } catch { /* jsdom without storage */ }
   mockApi(signedIn());
 });
 
@@ -133,11 +134,57 @@ describe('once signed in', () => {
 
     expect(screen.getByRole('button', { name: /Send to the mill/ })).toBeDisabled();
     fireEvent.click(screen.getAllByRole('checkbox')[0]!);
+    expect(screen.getByRole('button', { name: /Send to the mill/ })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Reason for rejection NKT001/),
+      { target: { value: 'off-shade after first bath' } });
     expect(screen.getByRole('button', { name: /Send to the mill/ })).toBeEnabled();
 
     fireEvent.click(screen.getByRole('button', { name: /Send to the mill/ }));
     await waitFor(() => expect(posted.some(p => p.path === '/declarations')).toBe(true));
-    expect(posted.find(p => p.path === '/declarations')!.body.lines).toEqual([{ barcode: 'NKT001' }]);
+    expect(posted.find(p => p.path === '/declarations')!.body.lines).toEqual([{
+      barcode: 'NKT001', qty: undefined, reason: 'off-shade after first bath'
+    }]);
+  });
+
+  test('a shortage records the quantity for each named thaan', async () => {
+    await enter();
+    fireEvent.click(screen.getByRole('button', { name: /Tell the mill something/ }));
+    fireEvent.change(await screen.findByLabelText(/What do you want to say/),
+      { target: { value: 'shortage' } });
+    fireEvent.click(screen.getAllByRole('checkbox')[0]!);
+
+    expect(screen.getByRole('button', { name: /Send to the mill/ })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Short quantity NKT001/), { target: { value: '7.5' } });
+    fireEvent.click(screen.getByRole('button', { name: /Send to the mill/ }));
+
+    await waitFor(() => expect(posted.some(p => p.path === '/declarations')).toBe(true));
+    expect(posted.find(p => p.path === '/declarations')!.body.lines[0]).toEqual({
+      barcode: 'NKT001', qty: 7.5, reason: undefined
+    });
+  });
+
+  test('return dispatch requires their challan and vehicle', async () => {
+    await enter();
+    fireEvent.click(screen.getByRole('button', { name: /Tell the mill something/ }));
+    fireEvent.change(await screen.findByLabelText(/What do you want to say/),
+      { target: { value: 'return_dispatch' } });
+    fireEvent.click(screen.getAllByRole('checkbox')[0]!);
+
+    const send = screen.getByRole('button', { name: /Send to the mill/ });
+    expect(send).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Your challan/), { target: { value: 'PTX-44' } });
+    expect(send).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Vehicle/), { target: { value: 'GJ05AB1234' } });
+    expect(send).toBeEnabled();
+  });
+
+  test('Hindi can be selected and clearly remains awaiting native review', () => {
+    render(<PortalApp />);
+    fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'hi' } });
+
+    expect(screen.getByText('प्रोसेस हाउस पोर्टल')).toBeInTheDocument();
+    expect(screen.getByText(/स्थानीय भाषी/)).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe('hi');
   });
 
   test('it says plainly that nothing here moves stock', async () => {
