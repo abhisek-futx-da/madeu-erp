@@ -18,10 +18,12 @@ set app.tenant_id = '11111111-1111-1111-1111-111111111111';
 
 \echo '== pieces =='
 
-insert into piece (tenant_id, barcode, quality_id, design_id, grade_code, lot_no,
+insert into piece (tenant_id, business_location_id, barcode, quality_id, design_id, grade_code, lot_no,
                    status, held_by_ledger_id, grey_qty, finish_qty, current_qty,
                    grey_cost, jobwork_cost, created_at)
 select '11111111-1111-1111-1111-111111111111',
+       (select id from business_location
+         where tenant_id='11111111-1111-1111-1111-111111111111' and is_default),
        'LOAD' || g,
        (array['44444444-0000-0000-0000-000000000001'::uuid,
               '44444444-0000-0000-0000-000000000002'::uuid])[1 + g % 2],
