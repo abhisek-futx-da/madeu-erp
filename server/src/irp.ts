@@ -82,10 +82,14 @@ export class IrpClient {
   async cancelIrn(irn: string, reason: string, remarks: string): Promise<IrpResult> {
     return this.withRetry(() =>
       this.#transport.post('/eicore/v1.03/Invoice/Cancel',
-        { Irn: irn, CnlRsn: reason, CnlRem: remarks }, this.authHeaders()));
+        { Irn: irn, CnlRsn: reason, CnlRem: remarks }, this.authHeaders()),
+      res => interpretCancellation(res, irn));
   }
 
-  private async withRetry(send: () => Promise<{ status: number; body: any }>): Promise<IrpResult> {
+  private async withRetry(
+    send: () => Promise<{ status: number; body: any }>,
+    parse: (res: { status: number; body: any }) => IrpResult = interpret
+  ): Promise<IrpResult> {
     let last: IrpFailure = { ok: false, code: 'NO_ATTEMPT', message: 'not attempted', retryable: false };
 
     for (let attempt = 1; attempt <= this.#maxAttempts; attempt++) {
@@ -101,12 +105,29 @@ export class IrpClient {
         continue;
       }
 
-      const parsed = interpret(res);
+      const parsed = parse(res);
       if (parsed.ok || !parsed.retryable) return parsed;
       last = parsed;
     }
     return last;
   }
+}
+
+/** Cancellation acknowledgements often return a cancel date but omit `Irn`. */
+export function interpretCancellation(
+  res: { status: number; body: any }, requestedIrn: string
+): IrpResult {
+  const b = res.body ?? {};
+  if (res.status === 200 && (b.Status === 1 || b.Status === '1')) {
+    const data = typeof b.Data === 'string' ? safeParse(b.Data) : b.Data;
+    return {
+      ok: true,
+      irn: String(data?.Irn ?? requestedIrn),
+      ackNo: String(data?.CancelDate ?? data?.AckNo ?? ''),
+      ackDate: String(data?.CancelDate ?? data?.AckDt ?? '')
+    };
+  }
+  return interpret(res);
 }
 
 export function interpret(res: { status: number; body: any }): IrpResult {
