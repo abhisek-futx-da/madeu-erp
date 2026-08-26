@@ -443,7 +443,8 @@ export async function postDispatch(
     lrNo?: string | null;
     vehicleNo?: string | null;
   },
-  lines: { barcode: string; rate: number; soLineId?: string | null }[]
+  /** `baleNo` is what the customer's storekeeper reads when they cut the strap. */
+  lines: { barcode: string; rate: number; soLineId?: string | null; baleNo?: number | null }[]
 ) {
   if (lines.length === 0) throw new Error('a dispatch needs at least one piece');
 
@@ -541,14 +542,15 @@ export async function postDispatch(
   });
 
   await ctx.db.query(
-    `insert into dispatch_line (tenant_id, dispatch_id, so_line_id, piece_id, sno, qty, rate)
-     select $1, $2, x.so_line_id, x.piece_id, x.sno, x.qty, x.rate
-       from unnest($3::uuid[], $4::uuid[], $5::smallint[], $6::numeric[], $7::numeric[])
-            as x(so_line_id, piece_id, sno, qty, rate)`,
+    `insert into dispatch_line (tenant_id, dispatch_id, so_line_id, piece_id, sno, qty, rate, bale_no)
+     select $1, $2, x.so_line_id, x.piece_id, x.sno, x.qty, x.rate, x.bale_no
+       from unnest($3::uuid[], $4::uuid[], $5::smallint[], $6::numeric[], $7::numeric[], $8::smallint[])
+            as x(so_line_id, piece_id, sno, qty, rate, bale_no)`,
     [
       ctx.tenantId, disp.id,
       resolved.map(r => r.soLineId ?? null), resolved.map(r => r.pieceId),
-      resolved.map(r => r.sno), resolved.map(r => r.qty), resolved.map(r => r.rate)
+      resolved.map(r => r.sno), resolved.map(r => r.qty), resolved.map(r => r.rate),
+      resolved.map(r => r.baleNo ?? null)
     ]
   );
 

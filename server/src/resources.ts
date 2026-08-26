@@ -68,6 +68,12 @@ const RESOURCES: Record<string, Resource> = {
     orderBy: 'cms', area: 'masters', search: ['code'],
     conflict: ['tenant_id', 'code']
   },
+  divisions: {
+    table: 'division',
+    columns: ['code', 'name', 'sort_order', 'is_active'],
+    orderBy: 'sort_order', area: 'masters', search: ['code', 'name'],
+    conflict: ['tenant_id', 'code']
+  },
   racks: {
     table: 'rack_master',
     columns: ['code', 'name', 'location', 'business_location_id'],

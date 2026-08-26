@@ -103,6 +103,76 @@ describe('scanning pieces onto a challan', () => {
     expect(screen.getByText(/Pieces: 0/)).toBeInTheDocument();
   });
 
+  test('two hundred thaans are picked from a list, not scanned one at a time', async () => {
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Pick from stock/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Add all 2/ }));
+    await waitFor(() => expect(screen.getByText(/Pieces: 2/)).toBeInTheDocument());
+  });
+
+  test('the picker filters by quality, lot, rack or barcode', async () => {
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Pick from stock/ }));
+    fireEvent.change(await screen.findByLabelText('Filter stock'), { target: { value: 'NKT002' } });
+    expect(screen.getByRole('button', { name: /Add all 1/ })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Filter stock'), { target: { value: 'nothing' } });
+    expect(screen.getByText(/Nothing eligible matches that/)).toBeInTheDocument();
+  });
+
+  test('picking one twice takes it off rather than adding it twice', async () => {
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Pick from stock/ }));
+    const box = await screen.findByRole('checkbox', { name: /Pick NKT001/ });
+    fireEvent.click(box);
+    await waitFor(() => expect(screen.getByText(/Pieces: 1/)).toBeInTheDocument());
+    fireEvent.click(box);
+    await waitFor(() => expect(screen.getByText(/Pieces: 0/)).toBeInTheDocument());
+  });
+
+  test('a thaan\'s journey opens beside the challan', async () => {
+    mockApi({
+      '/pieces/NKT001/flow': [{
+        event: 'inward', from_status: null, to_status: 'grey_in_stock',
+        qty_before: 0, qty_after: 100, counterparty: 'L.R. Textiles',
+        doc_type: 'grey_inward', occurred_at: '2026-08-21T06:00:00Z'
+      }]
+    });
+    render(<ScanDocumentView kind="issue" />);
+    await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.change(scanBox(), { target: { value: 'NKT001' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(screen.getByText(/Pieces: 1/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Journey of NKT001/ }));
+    await waitFor(() => expect(screen.getByText(/Journey of/)).toBeInTheDocument());
+    expect(await screen.findByText('L.R. Textiles')).toBeInTheDocument();
+    expect(screen.getByText('inward')).toBeInTheDocument();
+  });
+
+  test('a dispatch records which bale each thaan went into', async () => {
+    mockApi({
+      '/pieces': [{ ...PIECE('NKT001'), status: 'cut_packed' }],
+      '/control-accounts': [{ id: 'c1', nature: 'sundry_debtor_finish' }]
+    });
+    render(<ScanDocumentView kind="dispatch" />);
+    await waitFor(() => expect(screen.getByText(/1 pieces eligible/)).toBeInTheDocument());
+
+    fireEvent.change(scanBox(), { target: { value: 'NKT001' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    const bale = await screen.findByLabelText('Bale number for NKT001');
+    fireEvent.change(bale, { target: { value: '3' } });
+    expect(bale).toHaveValue(3);
+  });
+
   test('a scanned piece can be taken off again', async () => {
     render(<ScanDocumentView kind="issue" />);
     await waitFor(() => expect(screen.getByText(/2 pieces eligible/)).toBeInTheDocument());
