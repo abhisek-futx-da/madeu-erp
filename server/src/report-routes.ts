@@ -5,6 +5,8 @@ import { requireWrite } from './auth.ts';
 import { amountInWords } from './money.ts';
 import { ewayForChallan, ewayForInvoice } from './ewaybill.ts';
 import { listQuery, paged, sendCsv, type ListSpec } from './listing.ts';
+import { REPORTS, reportCatalogue, reportRows, reportTotals } from './reporting.ts';
+import { renderReportPdf } from './pdf.ts';
 import type { Ctx } from './domain.ts';
 
 const uuid = z.string().uuid();
@@ -294,60 +296,157 @@ export function operationalReportRouter() {
 
   // --------------------------------------------------------------- reports --
 
-  const REPORTS: Record<string, string> = {
-    'barcode-history': 'v_barcode_history',
-    'process-stock': 'v_process_stock',
-    'po-pending': 'v_po_pending',
-    'party-balance': 'v_party_balance',
-    'stock-summary': 'v_stock_summary',
-    shrinkage: 'v_shrinkage_by_process_house',
-    'gstr1-b2b': 'v_gstr1_b2b',
-    'gstr1-cdnr': 'v_gstr1_cdnr',
-    'gstr1-hsn': 'v_gstr1_hsn',
-    'gstr3b-outward': 'v_gstr3b_outward',
-    'einvoice-pending': 'v_einvoice_pending',
-    'itc-summary': 'v_itc_summary',
-    'gst-liability': 'v_gst_liability',
-    'receivable-ageing': 'v_receivable_ageing',
-    'party-statement': 'v_party_statement',
-    'trial-balance': 'v_trial_balance',
-    'quality-margin': 'v_quality_margin',
-    'weaver-scorecard': 'v_weaver_scorecard',
-    'process-house-scorecard': 'v_process_house_scorecard',
-    'gstr2b-reconciliation': 'v_gstr2b_reconciliation',
-    'tds-summary': 'v_tds_summary',
-    'stock-valuation': 'v_stock_valuation',
-    'outstanding-sales': 'v_outstanding_sales',
-    'outstanding-purchases': 'v_outstanding_purchases',
-    'cash-book': 'v_cash_book',
-    'piece-drift': 'v_piece_drift',
-    'piece-lineage': 'v_piece_lineage',
-    'regroup-imbalance': 'v_regroup_imbalance',
-    'stock-count-variance': 'v_stock_count_variance',
-    'stock-count-summary': 'v_stock_count_summary'
+  /**
+   * `format=json` answers with a bare array, which is what every existing
+   * caller reads. Row count and column totals are their own request, because
+   * a footer costs an aggregate over the whole report and most screens paging
+   * through rows do not want to pay for it on every page.
+   */
+  const reportQuery = z.object({
+    q: z.string().max(80).optional(),
+    from: isoDate.optional(),
+    to: isoDate.optional(),
+    limit: z.coerce.number().int().min(1).max(5000).default(500),
+    offset: z.coerce.number().int().min(0).default(0),
+    format: z.enum(['json', 'csv', 'pdf']).default('json'),
+    /** Columns to print, in order; defaults to everything the view returns. */
+    columns: z.string().max(600).optional()
+  });
+
+  const reportOr404 = (req: any, res: any) => {
+    const name = req.params.name ?? '';
+    const report = REPORTS[name];
+    if (!report) {
+      res.status(404).json({ error: 'unknown report' });
+      return null;
+    }
+    return { name, report };
   };
+
+  router.get('/report-catalogue', (_req, res) => res.json(reportCatalogue()));
+
+  router.get('/reports/:name/summary', async (req, res, next) => {
+    try {
+      const found = reportOr404(req, res);
+      if (!found) return;
+      const q = reportQuery.parse(req.query);
+      const { tenantId, userId } = req.session!;
+      const out = await withTenant(tenantId, userId, db =>
+        reportTotals(db, found.report, { ...q, format: 'json' }));
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  /** A page of rows is JSON; a file is the whole report, headed and totalled. */
+  async function deliver(res: any, tenantId: string, userId: string, out: {
+    format: 'csv' | 'pdf'; stem: string; title: string; period: string;
+    filter: string | null; rows: Record<string, unknown>[];
+    columns?: string; totals: Record<string, number>; totalRows: number;
+  }) {
+    const keys = out.columns
+      ? out.columns.split(',').map(c => c.trim()).filter(Boolean)
+      : Object.keys(out.rows[0] ?? {}).filter(k => k !== 'tenant_id' && !k.endsWith('_id'));
+    const picked = keys.length > 0
+      ? out.rows.map(r => Object.fromEntries(keys.map(k => [k, r[k]])))
+      : out.rows;
+    const stem = `${out.stem}-${out.period}`.replace(/[^A-Za-z0-9._-]+/g, '-');
+    if (out.format === 'csv') return sendCsv(res, stem, picked);
+
+    const mill = await withTenant(tenantId, userId, db =>
+      one<{ legal_name: string; gstin: string }>(
+        db, 'select legal_name, gstin from tenant where id = $1', [tenantId]));
+    const pdf = renderReportPdf({
+      millName: mill?.legal_name ?? 'Link ERP',
+      millGstin: mill?.gstin ?? '—',
+      title: out.title, period: out.period, filter: out.filter,
+      columns: keys.map(key => ({ key, label: humanise(key), right: key in out.totals })),
+      rows: picked, totals: out.totals, totalRows: out.totalRows
+    });
+    res.setHeader('content-type', 'application/pdf');
+    res.setHeader('content-disposition', `attachment; filename="${stem}.pdf"`);
+    res.send(pdf);
+  }
+
+  const today = () => new Date().toISOString().slice(0, 10);
 
   router.get('/reports/:name', async (req, res, next) => {
     try {
-      const name = req.params.name ?? '';
-      const view = REPORTS[name];
-      if (!view) return res.status(404).json({ error: 'unknown report' });
-      const q = z.object({
-        limit: z.coerce.number().int().min(1).max(5000).default(500),
-        offset: z.coerce.number().int().min(0).default(0),
-        format: z.enum(['json', 'csv']).default('json')
-      }).parse(req.query);
+      const found = reportOr404(req, res);
+      if (!found) return;
+      const { name, report } = found;
+      const q = reportQuery.parse(req.query);
       const { tenantId, userId } = req.session!;
-      // An export is the whole report; a screen only ever asks for a page of it.
-      const limit = q.format === 'csv' ? 20000 : q.limit;
-      const offset = q.format === 'csv' ? 0 : q.offset;
-      const rows = await withTenant(tenantId, userId, db =>
-        many<Record<string, unknown>>(db, `select * from ${view} limit $1 offset $2`,
-          [limit, offset]));
-      if (q.format === 'csv') return sendCsv(res, name, rows);
-      res.json(rows);
+
+      // A file is the whole report; a screen only ever asks for a page of it.
+      const file = q.format !== 'json';
+      const listing = { ...q, format: 'json' as const, ...(file ? { limit: 20000, offset: 0 } : {}) };
+      const { rows, totals } = await withTenant(tenantId, userId, async db => ({
+        rows: await reportRows(db, report, listing),
+        totals: file ? await reportTotals(db, report, listing) : null
+      }));
+      if (!file || !totals) return res.json(rows);
+
+      await deliver(res, tenantId, userId, {
+        format: q.format as 'csv' | 'pdf',
+        stem: name, title: report.title,
+        period: report.dateColumn
+          ? `${q.from ?? 'start'} to ${q.to ?? today()}`
+          : `as on ${today()}`,
+        filter: q.q ?? null, rows, columns: q.columns,
+        totals: totals.totals, totalRows: totals.total
+      });
+    } catch (e) { next(e); }
+  });
+
+  /**
+   * One ledger over one period, opening balance first. The party statement
+   * view carries a running balance over all time and cannot be windowed: cut
+   * it to a date range and the balance starts from nowhere.
+   */
+  router.get('/ledger', async (req, res, next) => {
+    try {
+      const q = z.object({
+        ledgerId: uuid,
+        from: isoDate,
+        to: isoDate,
+        format: z.enum(['json', 'csv', 'pdf']).default('json'),
+        columns: z.string().max(600).optional()
+      }).parse(req.query);
+      if (q.to < q.from) return res.status(400).json({ error: '`to` falls before `from`' });
+      const { tenantId, userId } = req.session!;
+
+      const { ledger, rows } = await withTenant(tenantId, userId, async db => ({
+        ledger: await one<{ code: string; name: string }>(
+          db, 'select code, name from ledger_account where id = $1', [q.ledgerId]),
+        rows: await many<Record<string, unknown>>(
+          db, 'select * from report_ledger($1::uuid, $2::date, $3::date)',
+          [q.ledgerId, q.from, q.to])
+      }));
+      if (!ledger) return res.status(404).json({ error: 'no such ledger' });
+
+      const opening = Number(rows[0]?.running_balance ?? 0);
+      const closing = Number(rows[rows.length - 1]?.running_balance ?? opening);
+      // Row 0 is the opening; adding it to the period's debits would double it.
+      const moves = rows.slice(1);
+      const sum = (k: string) => moves.reduce((n, r) => n + Number(r[k] ?? 0), 0);
+      const totals = { debit: sum('debit'), credit: sum('credit') };
+
+      if (q.format === 'json') {
+        return res.json({ ledger, from: q.from, to: q.to, opening, closing, totals, rows });
+      }
+      await deliver(res, tenantId, userId, {
+        format: q.format, stem: `ledger-${ledger.code}`,
+        title: `Ledger — ${ledger.name}`, period: `${q.from} to ${q.to}`,
+        filter: `Opening ${opening.toFixed(2)}   Closing ${closing.toFixed(2)}`,
+        rows, columns: q.columns, totals, totalRows: rows.length
+      });
     } catch (e) { next(e); }
   });
 
   return router;
 }
+
+/** Column labels for an export, from the key itself — the screens own the
+ *  prettier ones and duplicating that map here would let the two drift. */
+const humanise = (key: string) =>
+  key.replaceAll('_', ' ').replace(/\b[a-z]/g, c => c.toUpperCase()).replace(/\bPct\b/, '%');

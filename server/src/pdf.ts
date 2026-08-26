@@ -136,7 +136,7 @@ function statementPages(doc: PartyStatementBundle): PdfPage[] {
   return pages;
 }
 
-function renderPages(pages: PdfPage[]): Buffer {
+function renderPages(pages: PdfPage[], box = '0 0 595 842'): Buffer {
   const objects: string[] = ['', '', '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>'];
   const pageIds: number[] = [];
@@ -145,7 +145,7 @@ function renderPages(pages: PdfPage[]): Buffer {
       `BT /${item.bold ? 'F2' : 'F1'} ${item.size ?? 9} Tf ${item.x} ${item.y} Td (${pdfString(item.text)}) Tj ET`
     ).join('\n');
     const contentId = objects.push(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
-    const pageId = objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ` +
+    const pageId = objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [${box}] ` +
       `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentId} 0 R >>`);
     pageIds.push(pageId);
   }
@@ -171,4 +171,96 @@ export function renderInvoiceBundlePdf(doc: InvoiceBundle): Buffer {
 
 export function renderPartyStatementPdf(doc: PartyStatementBundle): Buffer {
   return renderPages(statementPages(doc));
+}
+
+// ------------------------------------------------------------ report PDF --
+
+export interface ReportColumn { key: string; label: string; right?: boolean }
+
+export interface ReportDoc {
+  millName: string;
+  millGstin: string;
+  title: string;
+  /** "01-04-2026 to 30-06-2026", or "as on 27-08-2026" for a position report. */
+  period: string;
+  filter: string | null;
+  columns: ReportColumn[];
+  rows: Record<string, unknown>[];
+  totals: Record<string, number>;
+  /** Rows behind the totals, which exceeds `rows.length` on a truncated export. */
+  totalRows: number;
+}
+
+/** A4 landscape. A report table is wide, and portrait clips it. */
+const LANDSCAPE = '0 0 842 595';
+const LEFT = 28;
+const RIGHT_EDGE = 814;
+
+/**
+ * Columns are widened to fit their own content, then scaled down together if
+ * the row overruns the page. Truncating every column equally would cut the
+ * narrow ones that had room to spare.
+ */
+function columnWidths(doc: ReportDoc): number[] {
+  // reduce, not Math.max(...cells): an export runs to twenty thousand rows.
+  const width = doc.columns.map(c => doc.rows.reduce(
+    (widest, r) => Math.max(widest, String(r[c.key] ?? '').length),
+    Math.max(c.label.length, 4)
+  ));
+  const budget = Math.floor((RIGHT_EDGE - LEFT) / 4.1);
+  let used = width.reduce((n, w) => n + w + 1, 0);
+  // Shave the widest column one character at a time until the row fits.
+  while (used > budget) {
+    const widest = width.indexOf(Math.max(...width));
+    if (width[widest]! <= 6) break;
+    width[widest] = width[widest]! - 1;
+    used--;
+  }
+  return width;
+}
+
+function reportPages(doc: ReportDoc): PdfPage[] {
+  const widths = columnWidths(doc);
+  const pages: PdfPage[] = [];
+  let page: PdfPage = [];
+  let y = 560;
+  const add = (text: string, size = 8, gap = 11, bold = false) => {
+    page.push({ text, x: LEFT, y, size, bold }); y -= gap;
+  };
+  const row = (values: unknown[]) =>
+    doc.columns.map((c, i) => cell(values[i], widths[i]!, c.right)).join(' ');
+  const heading = () => {
+    add(`${doc.millName}    GSTIN: ${doc.millGstin}`, 12, 15, true);
+    add(`${doc.title}   —   ${doc.period}`, 10, 13, true);
+    add(doc.filter ? `Filter: ${doc.filter}` : `Printed ${new Date().toISOString().slice(0, 10)}`, 7, 12);
+    add(row(doc.columns.map(c => c.label)), 7, 11, true);
+  };
+  const push = () => { pages.push(page); page = []; y = 560; };
+
+  heading();
+  for (const r of doc.rows) {
+    if (y < 46) { push(); heading(); }
+    add(row(doc.columns.map(c => {
+      const v = r[c.key];
+      return typeof v === 'number' ? v.toFixed(2) : v;
+    })), 7, 10);
+  }
+
+  if (y < 62) { push(); heading(); }
+  y -= 4;
+  if (Object.keys(doc.totals).length > 0) {
+    add(row(doc.columns.map((c, i) =>
+      i === 0 ? 'TOTAL' : (c.key in doc.totals ? money(doc.totals[c.key]!) : ''))), 7.5, 12, true);
+  }
+  const shown = doc.rows.length === doc.totalRows
+    ? `${doc.totalRows} rows`
+    : `${doc.rows.length} of ${doc.totalRows} rows — narrow the filter to print the rest`;
+  add(shown, 7, 11, true);
+  add('System-generated from Link ERP. Figures are from posted documents only.', 6.5, 10);
+  push();
+  return pages;
+}
+
+export function renderReportPdf(doc: ReportDoc): Buffer {
+  return renderPages(reportPages(doc), LANDSCAPE);
 }

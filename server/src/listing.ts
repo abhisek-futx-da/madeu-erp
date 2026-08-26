@@ -27,8 +27,8 @@ export interface ListSpec {
   select: string;
   /** Columns `q` searches, matched case-insensitively on any of them. */
   search: string[];
-  /** The date column `from`/`to` filter on. */
-  dateColumn: string;
+  /** The date column `from`/`to` filter on. Absent where the rows have no date. */
+  dateColumn?: string;
   orderBy: string;
   /** Extra always-on predicates, already parameterised as $1.. if needed. */
   where?: string;
@@ -42,11 +42,11 @@ export interface Page<T> {
 }
 
 /**
- * Runs the page and its count. Two statements rather than a window function,
- * because the count must ignore LIMIT and a `count(*) over ()` returns nothing
- * at all once the offset runs past the end.
+ * The search and date predicates, built once. Rows and totals must be scoped
+ * identically or a report footer states a total for a set the reader is not
+ * looking at.
  */
-export async function paged<T>(db: Db, spec: ListSpec, q: ListQuery): Promise<Page<T>> {
+export function whereFor(spec: ListSpec, q: ListQuery): { where: string; params: unknown[] } {
   const clauses: string[] = [];
   const params: unknown[] = [];
 
@@ -55,7 +55,11 @@ export async function paged<T>(db: Db, spec: ListSpec, q: ListQuery): Promise<Pa
   if (q.q) {
     params.push(`%${q.q}%`);
     const p = `$${params.length}`;
-    clauses.push(`(${spec.search.map(c => `${c} ilike ${p}`).join(' or ')})`);
+    clauses.push(`(${spec.search.map(c => `${c}::text ilike ${p}`).join(' or ')})`);
+  }
+  // A date filter with nowhere to apply it would silently widen the answer.
+  if ((q.from || q.to) && !spec.dateColumn) {
+    throw new DateFilterUnsupported();
   }
   if (q.from) {
     params.push(q.from);
@@ -66,7 +70,24 @@ export async function paged<T>(db: Db, spec: ListSpec, q: ListQuery): Promise<Pa
     clauses.push(`${spec.dateColumn} <= $${params.length}::date`);
   }
 
-  const where = clauses.length > 0 ? `where ${clauses.join(' and ')}` : '';
+  return { where: clauses.length > 0 ? `where ${clauses.join(' and ')}` : '', params };
+}
+
+/** A thrown Error carrying a message is answered as 400 by the error handler. */
+export class DateFilterUnsupported extends Error {
+  constructor() {
+    super('this report is a position as on today, not a period — it takes no date range');
+    this.name = 'DateFilterUnsupported';
+  }
+}
+
+/**
+ * Runs the page and its count. Two statements rather than a window function,
+ * because the count must ignore LIMIT and a `count(*) over ()` returns nothing
+ * at all once the offset runs past the end.
+ */
+export async function paged<T>(db: Db, spec: ListSpec, q: ListQuery): Promise<Page<T>> {
+  const { where, params } = whereFor(spec, q);
 
   const countRows = await many<{ n: number }>(
     db, `select count(*)::int as n from (select 1 from ${spec.from} ${where}) c`, params
