@@ -105,16 +105,21 @@ export function identityRouter() {
 
   router.get('/me', async (req, res, next) => {
     try {
-      const { tenantId, userId, role } = req.session!;
-      const [tenant, user] = await withTenant(tenantId, userId, async db => {
+      const { tenantId, userId, role, permissions, activeLocationId } = req.session!;
+      const [tenant, user, location] = await withTenant(tenantId, userId, async db => {
         const tenant = await one<{ legal_name: string; gstin: string; fy_start: string }>(
           db, 'select legal_name, gstin, fy_start from tenant where id = $1', [tenantId]);
         const user = await one<{ email: string; full_name: string }>(
           db, 'select email, full_name from app_user where id = $1', [userId]);
-        return [tenant, user] as const;
+        const location = activeLocationId
+          ? await one<{ id: string; code: string; name: string }>(db,
+              'select id,code,name from business_location where id=$1', [activeLocationId])
+          : null;
+        return [tenant, user, location] as const;
       });
       res.json({
-        userId, tenantId, role,
+        userId, tenantId, role, permissions: permissions ?? [],
+        activeLocation: location,
         user: user ? { email: user.email, fullName: user.full_name } : null,
         tenant: tenant
           ? { legalName: tenant.legal_name, gstin: tenant.gstin, fyLabel: fyLabel(new Date(tenant.fy_start)) }
@@ -137,10 +142,16 @@ export function identityRouter() {
       const users = await withTenant(tenantId, userId, db => many<{
         id: string; email: string; full_name: string; role: string;
         is_active: boolean; created_at: string; mfa_enabled: boolean;
+        permission_profile_id: string; permission_profile_name: string;
+        active_location_id: string; active_location_name: string;
       }>(db,
         `select u.id, u.email, u.full_name, m.role::text, m.is_active, u.created_at,
-                coalesce(um.enabled_at is not null, false) as mfa_enabled
+                coalesce(um.enabled_at is not null, false) as mfa_enabled,
+                m.permission_profile_id,p.name as permission_profile_name,
+                m.active_location_id,l.name as active_location_name
            from membership m join app_user u on u.id = m.user_id
+           join permission_profile p on p.id=m.permission_profile_id
+           join business_location l on l.id=m.active_location_id
            left join user_mfa um on um.user_id = u.id
           where m.tenant_id = $1
           order by m.is_active desc, m.role = 'owner' desc, lower(u.full_name), u.email`,
@@ -148,7 +159,11 @@ export function identityRouter() {
       ));
       res.json(users.map(u => ({
         id: u.id, email: u.email, fullName: u.full_name, role: u.role,
-        isActive: u.is_active, createdAt: u.created_at, mfaEnabled: u.mfa_enabled
+        isActive: u.is_active, createdAt: u.created_at, mfaEnabled: u.mfa_enabled,
+        permissionProfileId: u.permission_profile_id,
+        permissionProfileName: u.permission_profile_name,
+        activeLocationId: u.active_location_id,
+        activeLocationName: u.active_location_name
       })));
     } catch (e) { next(e); }
   });
@@ -183,6 +198,8 @@ export function identityRouter() {
         email: z.string().email().max(254),
         fullName: z.string().trim().min(2).max(120),
         role: memberRole,
+        permissionProfileId: uuid.optional(),
+        activeLocationId: uuid.optional(),
         password: strongPassword
       }).parse(req.body);
       const { tenantId, userId } = req.session!;
@@ -198,9 +215,11 @@ export function identityRouter() {
         );
         if (!user) throw new Error('user creation returned nothing');
         await db.query(
-          `insert into membership (tenant_id, user_id, role, is_active)
-           values ($1, $2, $3::member_role, true)`,
-          [tenantId, user.id, body.role]
+          `insert into membership
+             (tenant_id,user_id,role,is_active,permission_profile_id,active_location_id)
+           values ($1,$2,$3::member_role,true,$4,$5)`,
+          [tenantId, user.id, body.role, body.permissionProfileId ?? null,
+           body.activeLocationId ?? null]
         );
         await db.query(
           `insert into access_audit (tenant_id, actor_id, target_user_id, event, details)
@@ -220,10 +239,14 @@ export function identityRouter() {
     try {
       const body = z.object({
         role: memberRole.optional(),
+        permissionProfileId: uuid.optional(),
+        activeLocationId: uuid.optional(),
         isActive: z.boolean().optional(),
         resetPassword: strongPassword.optional()
-      }).refine(value => value.role !== undefined || value.isActive !== undefined || value.resetPassword !== undefined,
-        'choose a role, an access state, or a password reset').parse(req.body);
+      }).refine(value => value.role !== undefined || value.permissionProfileId !== undefined ||
+          value.activeLocationId !== undefined || value.isActive !== undefined ||
+          value.resetPassword !== undefined,
+        'choose a role, profile, location, access state, or password reset').parse(req.body);
       const targetId = uuid.parse(req.params.userId);
       const { tenantId, userId } = req.session!;
       if (targetId === userId && body.resetPassword) {
@@ -239,13 +262,21 @@ export function identityRouter() {
         );
         if (!before) throw new Error('user is not a member of this company');
 
-        if (body.role !== undefined || body.isActive !== undefined) {
+        if (body.role !== undefined || body.permissionProfileId !== undefined ||
+            body.activeLocationId !== undefined || body.isActive !== undefined) {
           await db.query(
             `update membership
-                set role = coalesce($3::member_role, role),
-                    is_active = coalesce($4::boolean, is_active)
+                set role = coalesce($3::member_role,
+                      (select base_role from permission_profile where id=$5),role),
+                    is_active = coalesce($4::boolean, is_active),
+                    permission_profile_id = case
+                      when $5::uuid is not null then $5
+                      when $3::member_role is not null then null
+                      else permission_profile_id end,
+                    active_location_id = coalesce($6::uuid,active_location_id)
               where tenant_id = $1 and user_id = $2`,
-            [tenantId, targetId, body.role ?? null, body.isActive ?? null]
+            [tenantId, targetId, body.role ?? null, body.isActive ?? null,
+             body.permissionProfileId ?? null, body.activeLocationId ?? null]
           );
         }
         if (passwordHash) {
@@ -270,7 +301,8 @@ export function identityRouter() {
           [tenantId, targetId]
         );
         if (!after) throw new Error('user update returned nothing');
-        if (body.role !== undefined || body.isActive !== undefined) {
+        if (body.role !== undefined || body.permissionProfileId !== undefined ||
+            body.activeLocationId !== undefined || body.isActive !== undefined) {
           await db.query(
             `insert into access_audit (tenant_id, actor_id, target_user_id, event, details)
              values ($1, $2, $3, $4, jsonb_build_object(

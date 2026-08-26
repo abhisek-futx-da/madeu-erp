@@ -54,7 +54,10 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '2mb' }));
+// Evidence attachments are base64 inside authenticated JSON. Five binary MB
+// expands to about 6.7 MB; eight keeps the explicit attachment cap reachable
+// without accepting unbounded request bodies elsewhere.
+app.use(express.json({ limit: '8mb' }));
 
 app.use((_req, res, next) => {
   res.setHeader('x-content-type-options', 'nosniff');
@@ -75,7 +78,13 @@ app.use((_req, res, next) => {
  */
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = Number(process.env.RATE_LIMIT_PER_MINUTE ?? 600);
-const RATE_MODE = process.env.RATE_LIMIT_MODE ?? 'memory';
+/**
+ * The shared bucket is the default. The in-process Map only ever bounded one
+ * instance, so two behind a load balancer allowed twice the ceiling and a
+ * restart cleared it entirely — a limit that is not the limit is not a limit.
+ * `memory` remains available for a single-process dev run with no database.
+ */
+const RATE_MODE = process.env.RATE_LIMIT_MODE ?? 'database';
 if (!Number.isSafeInteger(RATE_MAX) || RATE_MAX < 1) throw new Error('RATE_LIMIT_PER_MINUTE must be a positive integer');
 if (!['memory', 'database'].includes(RATE_MODE)) throw new Error('RATE_LIMIT_MODE must be memory or database');
 const hits = new Map<string, { n: number; until: number }>();
@@ -206,7 +215,28 @@ pool.on('error', err => {
   }));
 });
 
+/**
+ * Prove the shared bucket works before taking traffic. Without this a missing
+ * `api_rate_limit` table turns every request into a 500, and the prune timer
+ * swallows the error that would have explained why.
+ */
+async function checkRateLimitBackend() {
+  if (RATE_MODE !== 'database') return;
+  try {
+    await consumeRateLimit(`boot:${process.pid}:${Date.now()}`, Number.MAX_SAFE_INTEGER);
+  } catch (err) {
+    console.error(JSON.stringify({
+      t: new Date().toISOString(), level: 'error',
+      message: 'RATE_LIMIT_MODE=database but the api_rate_limit table is unreachable; '
+             + 'apply the migrations or set RATE_LIMIT_MODE=memory',
+      detail: String(err)
+    }));
+    process.exit(1);
+  }
+}
+
 const port = Number(process.env.PORT ?? 4000);
+await checkRateLimitBackend();
 const server = app.listen(port, () => console.log(`link-erp api listening on :${port}`));
 
 const prune = setInterval(() => {

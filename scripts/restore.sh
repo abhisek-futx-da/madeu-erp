@@ -18,6 +18,24 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 source "${HERE}/scripts/lib-release.sh"
 
 [ -f "${FILE}" ] || { echo "no such file: ${FILE}" >&2; exit 1; }
+
+# An encrypted archive is decrypted to a private temp file first. The plaintext
+# never outlives this script, and never lands next to the ciphertext.
+if [ "${FILE%.gpg}" != "${FILE}" ]; then
+  command -v gpg > /dev/null || { echo "this archive is encrypted and gpg is not installed" >&2; exit 1; }
+  PLAIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/link-erp-restore.XXXXXX")"
+  chmod 700 "${PLAIN_DIR}"
+  trap 'rm -rf -- "${PLAIN_DIR}"' EXIT
+  PLAIN="${PLAIN_DIR}/$(basename "${FILE%.gpg}")"
+  if [ -n "${BACKUP_PASSPHRASE:-}" ]; then
+    printf '%s' "${BACKUP_PASSPHRASE}" | gpg --batch --quiet --passphrase-fd 0 \
+      --pinentry-mode loopback --output "${PLAIN}" --decrypt "${FILE}"
+  else
+    gpg --batch --quiet --output "${PLAIN}" --decrypt "${FILE}"
+  fi
+  [ -s "${PLAIN}" ] || { echo "could not decrypt ${FILE}" >&2; exit 1; }
+  FILE="${PLAIN}"
+fi
 # Database names are interpolated only where PostgreSQL cannot parameterise an
 # identifier. Refuse anything except an ordinary identifier before doing so.
 [[ "${TARGET}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "invalid target database name" >&2; exit 1; }

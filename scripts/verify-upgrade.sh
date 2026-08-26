@@ -29,7 +29,9 @@ psql -q -v ON_ERROR_STOP=1 -d "${DB}" -c \
 
 for path in "${ROOT}"/link-erp/db/0*.sql; do
   file="$(basename "${path}")"
-  case "${file}" in 002_*|*seed*|042_*|043_*|044_*|045_*|046_*|047_*|048_*|049_*|050_*|051_*|052_*|053_*|054_*) continue ;; esac
+  case "${file}" in
+    002_*|*seed*|042_*|043_*|044_*|045_*|046_*|047_*|048_*|049_*|050_*|051_*|052_*|053_*|054_*|056_*|057_*|058_*|059_*|060_*|061_*|062_*) continue ;;
+  esac
   psql -q -v ON_ERROR_STOP=1 -d "${DB}" -f "${path}"
   record_migration "${file}" "${path}"
 done

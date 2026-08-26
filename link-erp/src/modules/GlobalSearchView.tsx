@@ -30,7 +30,7 @@ export const GlobalSearchView: React.FC<{
       <form onSubmit={event => { event.preventDefault(); setQuery(input.trim()); }} className="p-4 bg-white border-b border-slate-200 flex items-center gap-2">
         <Search className="w-5 h-5 text-blue-800" />
         <label htmlFor="global-search" className="font-bold text-blue-950">Find anything</label>
-        <input id="global-search" autoFocus value={input} onChange={event => setInput(event.target.value)} className="erp-input w-full max-w-2xl" placeholder="Barcode, party, GSTIN, PO, SO, challan, invoice, payment or e-way bill…" />
+        <input id="global-search" autoFocus value={input} onChange={event => setInput(event.target.value)} className="erp-input w-full max-w-2xl" placeholder="Barcode, party, GSTIN, order, invoice, payment, e-way bill or edition document…" />
         <button type="submit" disabled={input.trim().length < 2} className="erp-btn erp-btn-primary font-bold disabled:opacity-40">Search</button>
       </form>
       <div className="flex-1 overflow-auto p-4">

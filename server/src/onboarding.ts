@@ -238,8 +238,11 @@ async function applyRows(db: Db, tenantId: string, resource: Resource, rows: Nor
              on conflict (tenant_id,code) do update set cms=excluded.cms,inches=excluded.inches`;
       break;
     case 'racks':
-      sql = `insert into rack_master (tenant_id,code,name,location)
-             select $1,x.code,x.name,x.location from jsonb_to_recordset($2::jsonb)
+      sql = `insert into rack_master (tenant_id,code,name,location,business_location_id)
+             select $1,x.code,x.name,x.location,
+                    (select active_location_id from membership
+                      where tenant_id=$1 and user_id=current_setting('app.user_id',true)::uuid)
+               from jsonb_to_recordset($2::jsonb)
                as x(code text,name text,location text)
              on conflict (tenant_id,code) do update set name=excluded.name,location=excluded.location`;
       break;

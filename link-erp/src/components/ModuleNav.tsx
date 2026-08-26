@@ -17,6 +17,8 @@ export const NAV: NavGroup[] = [
       { id: 'approvals', label: 'Approvals' },
       { id: 'password', label: 'My Password' },
       { id: 'company_setup', label: 'Company Setup & Controls', ownerOnly: true },
+      { id: 'go_live_readiness', label: 'Go-Live Readiness', ownerOnly: true },
+      { id: 'platform_studio', label: 'Customization & Integration Studio', ownerOnly: true },
       { id: 'barcode_history', label: 'Barcode History' },
       { id: 'audit_trail', label: 'Audit Trail' }
     ]
@@ -37,6 +39,16 @@ export const NAV: NavGroup[] = [
     ]
   },
   {
+    label: 'Editions',
+    items: [
+      { id: 'edition_weaving', label: 'Weaving Edition' },
+      { id: 'edition_dyeing', label: 'Dyeing Edition' },
+      { id: 'edition_exports', label: 'Exports Edition' },
+      { id: 'edition_logistics', label: 'Logistics Edition' },
+      { id: 'edition_garments', label: 'Garments Edition' }
+    ]
+  },
+  {
     label: 'Inventory',
     items: [
       { id: 'purchase_orders', label: 'Grey Purchase Orders' },
@@ -52,6 +64,7 @@ export const NAV: NavGroup[] = [
       { id: 'cut_pack', label: 'Cut / Pack' },
       { id: 'regroup', label: 'Split / Join Thaan' },
       { id: 'stock_count', label: 'Physical Stock Count' },
+      { id: 'location_transfers', label: 'Godown Stock Transfers' },
       { id: 'delivery_challans', label: 'Delivery Challans (Rule 55)' },
       { id: 'labels', label: 'Barcode Labels' },
       { id: 'dispatch', label: 'Dispatch' },

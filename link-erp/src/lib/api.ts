@@ -63,8 +63,14 @@ export interface Page<T> { rows: T[]; total: number; limit: number; offset: numb
 
 export interface TenantInfo { legalName: string; gstin: string; fyLabel: string }
 export interface UserInfo { email: string; fullName: string }
+export interface BusinessLocation {
+  id: string; code: string; name: string; kind?: string; gstin?: string | null;
+  address?: string; state_code?: string; is_default?: boolean; is_active?: boolean;
+}
 export interface Session {
   userId: string; tenantId: string; role: string;
+  permissions?: string[];
+  activeLocation?: BusinessLocation | null;
   tenant: TenantInfo | null;
   user: UserInfo | null;
 }

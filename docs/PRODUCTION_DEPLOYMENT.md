@@ -66,25 +66,63 @@ anti-framing, referrer, and permissions headers.
 5. Do **not** use any `*_seed.sql` file for a real company. The bootstrap
    intentionally leaves bank accounts, parties, HSN/SAC and GST rates,
    qualities/designs, racks, rate contracts, opening balances, TDS/TCS rules,
-   brokerage, shrinkage tolerance, and commercial approval limits empty.
+   brokerage, shrinkage tolerance, and mill-specific approval thresholds empty.
    Add and reconcile those using the signed mill/CA setup pack before posting
    a live document. It does create the neutral chart, stock and tax posting
-   ledgers, document series, standard units, and a mandatory independent
-   approval for every physical stock count.
-6. Create a backup with `./scripts/backup.sh` and copy it to independent
-   storage under the owner's control. The scripts select a matching official
-   PostgreSQL client image if the host's archive tools are older than the
-   database server.
-7. Prove the copy restores into a different database using
+   ledgers, document series, standard units, and mandatory zero-threshold owner
+   approval for all nine financial/stock exception classes. The owner may set
+   stricter role/amount thresholds but must not disable the pilot controls.
+6. In **Home → Go-Live Readiness**, create every registered office, branch,
+   godown, and outlet; assign each worker a matching permission profile and
+   active location in **Masters → People & Access**. Enter the CA-signed opening
+   books, bill-wise receivables/payables, and every physical opening-stock
+   barcode with location, rack, stage, metres/kilograms, and carried value.
+   Use the supplied CSV templates for bulk cutover, review the validated stock
+   rows before posting, and keep the CA-signed source sheets as hashed document
+   attachments on the resulting opening-stock batches. Bill files post as one
+   transaction only after the owner confirms the validated row count.
+   Reconcile the page's readiness checks before the first live voucher. Opening
+   data deliberately locks once live posting begins.
+7. Run the read-only real-tenant gate and retain its complete output:
+
+   ```bash
+   PILOT_TENANT_ID=<bootstrap-tenant-uuid> POSTGRES_DB=linkerp \
+     ./scripts/pilot-data-gate.sh
+   ```
+
+   A failure means do not enter live documents. A pass is a data-completeness
+   result, not CA, GSP/IRP, hardware, or mill acceptance.
+8. In **Editions**, leave enabled only the operations this company will pilot.
+   For each enabled edition, agree workflow ownership, number prefixes,
+   required evidence, custom fields, approval workflows, resources, opening
+   quantities/values, material UOMs, and downstream integration subscriptions.
+   Enter one non-live sample through every used workflow and prove document
+   linking, material/cost lines, maker-checker where configured, average-cost
+   stock posting, job costing, start, hold, resume, completion, cancellation,
+   CSV export, attachment download, search, reports, and feed acknowledgement.
+   These checks prove the software path; export
+   documents and statutory filings still need provider/CA acceptance.
+9. Create a backup with `./scripts/backup.sh`, with `BACKUP_RECIPIENT` (or
+   `BACKUP_PASSPHRASE`) and `BACKUP_MIRROR_DIR` set, so the archive is
+   encrypted and lands on storage under the owner's control that is not the
+   database's own disk. The script fails rather than writing plaintext when
+   encryption was asked for and `gpg` is missing, and it warns on every run
+   that leaves the archive unencrypted or unmirrored. The scripts select a
+   matching official PostgreSQL client image if the host's archive tools are
+   older than the database server.
+10. Prove the copy restores into a different database using
    `./scripts/verify-backup-restore.sh`.
-8. Record the release revision, migration count, bootstrap result, backup
+11. Record the release revision, migration count, bootstrap result, pilot-data
+   gate result, backup
    timestamp, restore result, full `scripts/ci-local.sh` result, and the people
    permitted to operate the system.
 
 ## 4. Establish staff access before documents
 
-The owner creates named accounts in **Masters → People & Access**. Give every
-worker their own address and temporary password privately. They change it in
+The owner creates named accounts in **Masters → People & Access**, assigns a
+permission profile and business location, and verifies the shell shows the
+correct active location before work. Give every worker their own address and
+temporary password privately. They change it in
 **Home → My Password**. Remove a leaver by disabling their membership; this
 invalidates their existing sessions. The database refuses to remove the last
 active owner, and the Access Audit records every create, change, disable, and
@@ -113,6 +151,14 @@ Import the Tally XML into a disposable copy of the mill's Tally company. Match
 ledger masters, voucher counts, debit/credit totals, and closing balances. Do
 not import into the live Tally company until the accountant and CA sign that
 reconciliation.
+
+Create external feeds only in **Home → Customization & Integration Studio**.
+Copy the one-time key directly into the adapter's secret manager, then clear it
+from the clipboard; never place it in a ticket, chat, spreadsheet, source file,
+or screenshot. Run provider adapters as separate least-privilege processes,
+acknowledge a delivery only after the downstream commit, alert on failed/pending
+backlogs, and rehearse pause plus key rotation before live use. The pull-feed
+contract and event lifecycle are documented in `SHARED_PLATFORM.md`.
 
 ## 6. Start the pilot, not a broad rollout
 

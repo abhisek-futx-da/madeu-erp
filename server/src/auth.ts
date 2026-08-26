@@ -12,11 +12,18 @@ const PREVIOUS_SECRETS = (process.env.JWT_PREVIOUS_SECRETS ?? '')
 const VERIFY_SECRETS = [SECRET, ...PREVIOUS_SECRETS.filter(value => value !== SECRET)];
 
 export type Role = 'owner' | 'accounts' | 'purchase' | 'sales' | 'store' | 'viewer';
+export type Permission =
+  'write:masters' | 'write:purchase' | 'write:store' |
+  'write:sales' | 'write:accounts' | 'write:owner';
 
 export interface Session {
   userId: string;
   tenantId: string;
   role: Role;
+  /** Re-read from the assigned tenant profile on every request. */
+  permissions?: Permission[];
+  /** The business location selected for this company membership. */
+  activeLocationId?: string;
   /** Token id, so a single session can be revoked before it expires. */
   jti?: string;
   /** Password changes and administrator resets invalidate every old session. */
@@ -232,12 +239,16 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
   try {
     const state = await withoutTenant(db =>
-      one<{ is_active: boolean; session_version: number; role: Role | null; revoked: boolean }>(
+      one<{
+        is_active: boolean; session_version: number; role: Role | null;
+        permissions: Permission[] | null; active_location_id: string | null; revoked: boolean;
+      }>(
         db,
-        `select u.is_active, u.session_version,
-                (select m.role from user_memberships($1) m where m.tenant_id = $2) as role,
+        `select u.is_active, u.session_version, s.role, s.permissions, s.active_location_id,
                 exists (select 1 from revoked_token where jti = $3::uuid) as revoked
-           from app_user u where u.id = $1`,
+           from app_user u
+           left join lateral user_membership_state($1,$2) s on true
+          where u.id = $1`,
         [claims.userId, claims.tenantId, claims.jti ?? null]
       )
     );
@@ -263,7 +274,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    req.session = { ...claims, role: state.role };
+    req.session = {
+      ...claims, role: state.role,
+      permissions: state.permissions ?? [],
+      activeLocationId: state.active_location_id ?? undefined
+    };
     next();
   } catch (err) {
     next(err);
@@ -283,7 +298,11 @@ const WRITERS: Record<string, Role[]> = {
 export function requireWrite(area: keyof typeof WRITERS) {
   return (req: Request, res: Response, next: NextFunction) => {
     const role = req.session?.role;
-    if (!role || !WRITERS[area]?.includes(role)) {
+    const permissions = req.session?.permissions;
+    const allowed = permissions
+      ? permissions.includes(`write:${area}` as Permission)
+      : Boolean(role && WRITERS[area]?.includes(role));
+    if (!allowed) {
       res.status(403).json({ error: `role ${role ?? 'none'} cannot write ${area}` });
       return;
     }

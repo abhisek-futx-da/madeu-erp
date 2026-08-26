@@ -15,6 +15,7 @@ import { approvalFor, holdVoucher, recordEvent } from './approvals.ts';
 export interface AllocationInput {
   salesInvoiceId?: string | null;
   purchaseInvoiceId?: string | null;
+  openingOutstandingId?: string | null;
   amount: number;
 }
 
@@ -126,12 +127,13 @@ export async function recordPayment(ctx: Ctx, input: PaymentInput) {
   if (allocations.length > 0) {
     await ctx.db.query(
       `insert into payment_allocation (tenant_id, payment_id, sales_invoice_id,
-                                       purchase_invoice_id, amount)
-       select $1, $2, x.si, x.pi, x.amt
-         from unnest($3::uuid[], $4::uuid[], $5::numeric[]) as x(si, pi, amt)`,
+                                       purchase_invoice_id,opening_outstanding_id,amount)
+       select $1, $2, x.si, x.pi, x.oi, x.amt
+         from unnest($3::uuid[], $4::uuid[], $5::uuid[], $6::numeric[]) as x(si,pi,oi,amt)`,
       [ctx.tenantId, pay.id,
        allocations.map(a => a.salesInvoiceId ?? null),
        allocations.map(a => a.purchaseInvoiceId ?? null),
+       allocations.map(a => a.openingOutstandingId ?? null),
        allocations.map(a => round2(a.amount))]
     );
   }
@@ -229,9 +231,11 @@ export async function recordPayment(ctx: Ctx, input: PaymentInput) {
 export async function suggestAllocation(ctx: Ctx, partyId: string, kind: 'receipt' | 'payment', amount: number) {
   const view = kind === 'receipt' ? 'v_outstanding_sales' : 'v_outstanding_purchases';
   const idCol = kind === 'receipt' ? 'invoice_id' : 'invoice_id';
-  const rows = await many<{ invoice_id: string; label: string; outstanding: number }>(
+  const rows = await many<{
+    invoice_id: string; source_kind: 'invoice' | 'opening'; label: string; outstanding: number;
+  }>(
     ctx.db,
-    `select ${idCol} as invoice_id,
+    `select ${idCol} as invoice_id,source_kind,
             ${kind === 'receipt' ? 'invoice_no' : 'our_ref'} as label,
             outstanding
        from ${view}
@@ -242,11 +246,18 @@ export async function suggestAllocation(ctx: Ctx, partyId: string, kind: 'receip
   );
 
   let left = amount;
-  const picks: { invoiceId: string; label: string; amount: number }[] = [];
+  const picks: {
+    invoiceId?: string; openingOutstandingId?: string; label: string; amount: number;
+  }[] = [];
   for (const r of rows) {
     if (left <= 0.005) break;
     const take = Math.min(left, Number(r.outstanding));
-    picks.push({ invoiceId: r.invoice_id, label: r.label, amount: round2(take) });
+    picks.push({
+      ...(r.source_kind === 'opening'
+        ? { openingOutstandingId: r.invoice_id }
+        : { invoiceId: r.invoice_id }),
+      label: r.label, amount: round2(take)
+    });
     left = round2(left - take);
   }
   return { allocations: picks, onAccount: round2(left) };

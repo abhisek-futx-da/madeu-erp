@@ -4,7 +4,9 @@ import { usePagedList } from '../lib/usePagedList';
 import { ListControls } from '../components/ListControls';
 import { useApi, useSubmit } from '../lib/useApi';
 import { api, ApiError, type LedgerRow } from '../lib/api';
-import { AlertTriangle, CheckCircle2, Wallet, Wand2, XCircle, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Paperclip, Settings2, Wallet, Wand2, XCircle, Plus, Trash2 } from 'lucide-react';
+import { DocumentAttachments } from '../components/DocumentAttachments';
+import { CustomFieldsPanel } from '../components/CustomFieldsPanel';
 
 interface PaymentRow {
   id: string; voucher_no: string; kind: 'receipt' | 'payment'; payment_date: string;
@@ -15,11 +17,14 @@ interface PaymentRow {
 
 interface Outstanding {
   invoice_id: string; invoice_no?: string; our_ref?: string;
+  source_kind?: 'invoice' | 'opening';
   invoice_date: string; party: string; code: string;
   invoice_total: number; paid: number; outstanding: number; overdue_days?: number;
 }
 
-interface Alloc { invoiceId: string; label: string; amount: number }
+interface Alloc {
+  invoiceId?: string; openingOutstandingId?: string; label: string; amount: number;
+}
 interface Deduction {
   invoiceId: string; label: string;
   kind: 'cash_discount' | 'quality_discount' | 'rate_difference' | 'shortage' | 'tds' | 'other';
@@ -52,6 +57,8 @@ export const PaymentView: React.FC = () => {
   const [deductionReason, setDeductionReason] = useState('');
   const [taxTreatment, setTaxTreatment] = useState<Deduction['taxTreatment']>('none');
   const [notice, setNotice] = useState<string | null>(null);
+  const [attachmentFor, setAttachmentFor] = useState<PaymentRow | null>(null);
+  const [customFor, setCustomFor] = useState<PaymentRow | null>(null);
 
   const ledgers = useApi<LedgerRow[]>('/ledgers');
   const controls = useApi<{ id: string; nature: string }[]>('/control-accounts');
@@ -106,14 +113,22 @@ export const PaymentView: React.FC = () => {
     }
   };
 
-  const setAlloc = (invoiceId: string, label: string, value: number) =>
+  const allocationId = (allocation: Alloc) =>
+    allocation.openingOutstandingId ?? allocation.invoiceId ?? '';
+  const setAlloc = (bill: Outstanding, label: string, value: number) =>
     setAllocs(prev => {
-      const rest = prev.filter(a => a.invoiceId !== invoiceId);
-      return value > 0 ? [...rest, { invoiceId, label, amount: value }] : rest;
+      const rest = prev.filter(a => allocationId(a) !== bill.invoice_id);
+      return value > 0 ? [...rest, {
+        ...(bill.source_kind === 'opening'
+          ? { openingOutstandingId: bill.invoice_id }
+          : { invoiceId: bill.invoice_id }),
+        label, amount: value
+      }] : rest;
     });
 
   const addDeduction = () => {
-    const bill = partyBills.find(item => item.invoice_id === deductionInvoice);
+    const bill = partyBills.find(item =>
+      item.invoice_id === deductionInvoice && item.source_kind !== 'opening');
     if (!bill || deductionAmount <= 0 || deductionReason.trim().length < 2) {
       setNotice('choose a bill, amount and a clear deduction reason');
       return;
@@ -135,10 +150,12 @@ export const PaymentView: React.FC = () => {
       instrumentNo: instrumentNo || null,
       bankLedgerId: mode === 'cash' ? null : (bankLedgerId || null),
       narration,
-      allocations: allocs.map(a => ({
-        [kind === 'receipt' ? 'salesInvoiceId' : 'purchaseInvoiceId']: a.invoiceId,
-        amount: a.amount
-      })),
+      allocations: allocs.map(a => a.openingOutstandingId
+        ? { openingOutstandingId: a.openingOutstandingId, amount: a.amount }
+        : {
+            [kind === 'receipt' ? 'salesInvoiceId' : 'purchaseInvoiceId']: a.invoiceId,
+            amount: a.amount
+          }),
       deductions: deductions.map(deduction => ({
         [kind === 'receipt' ? 'salesInvoiceId' : 'purchaseInvoiceId']: deduction.invoiceId,
         kind: deduction.kind, amount: deduction.amount, reason: deduction.reason,
@@ -269,7 +286,8 @@ export const PaymentView: React.FC = () => {
               <select aria-label="Deduction bill" value={deductionInvoice}
                       onChange={e => setDeductionInvoice(e.target.value)} className="erp-input md:col-span-2">
                 <option value="">— bill —</option>
-                {partyBills.map(bill => <option key={bill.invoice_id} value={bill.invoice_id}>
+                {partyBills.filter(bill => bill.source_kind !== 'opening')
+                  .map(bill => <option key={bill.invoice_id} value={bill.invoice_id}>
                   {bill.invoice_no ?? bill.our_ref}
                 </option>)}
               </select>
@@ -346,7 +364,7 @@ export const PaymentView: React.FC = () => {
                 )}
                 {partyBills.map(o => {
                   const label = o.invoice_no ?? o.our_ref ?? '';
-                  const current = allocs.find(a => a.invoiceId === o.invoice_id)?.amount ?? 0;
+                  const current = allocs.find(a => allocationId(a) === o.invoice_id)?.amount ?? 0;
                   return (
                     <tr key={o.invoice_id} className="border-b border-slate-100">
                       <td className="px-2 py-1 font-mono text-blue-800">{label}</td>
@@ -362,7 +380,7 @@ export const PaymentView: React.FC = () => {
                       <td className="px-2 py-1 text-right">
                         <input type="number" step="0.01" value={current || ''}
                                max={Number(o.outstanding)}
-                               onChange={e => setAlloc(o.invoice_id, label, Number(e.target.value))}
+                               onChange={e => setAlloc(o, label, Number(e.target.value))}
                                className="erp-input w-28 text-right font-mono" />
                       </td>
                     </tr>
@@ -421,6 +439,14 @@ export const PaymentView: React.FC = () => {
                   </td>
                   <td className="px-2 py-1 text-right font-mono">{money(p.allocated)}</td>
                   <td className="px-2 py-1 text-right">
+                    <button onClick={() => setCustomFor(p)}
+                            aria-label={`Custom fields for ${p.voucher_no}`} className="mr-2 text-violet-700 hover:text-violet-900">
+                      <Settings2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => setAttachmentFor(p)}
+                            aria-label={`Attachments for ${p.voucher_no}`} className="mr-2 text-blue-700 hover:text-blue-900">
+                      <Paperclip className="w-3.5 h-3.5" />
+                    </button>
                     {p.status !== 'cancelled' && (
                       <button onClick={() => cancel(p.id, p.voucher_no)}
                               title="Cancel and reverse" className="text-red-600 hover:text-red-800">
@@ -439,6 +465,14 @@ export const PaymentView: React.FC = () => {
           </table>
         </div>
       </div>
+      {attachmentFor && (
+        <DocumentAttachments docType="payment" docId={attachmentFor.id}
+          label={attachmentFor.voucher_no} onClose={() => setAttachmentFor(null)} />
+      )}
+      {customFor && (
+        <CustomFieldsPanel entityType="payment" entityId={customFor.id}
+          label={customFor.voucher_no} onClose={() => setCustomFor(null)} />
+      )}
     </div>
   );
 };

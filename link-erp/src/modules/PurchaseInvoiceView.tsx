@@ -4,7 +4,9 @@ import { usePagedList } from '../lib/usePagedList';
 import { ListControls } from '../components/ListControls';
 import { useApi, useSubmit } from '../lib/useApi';
 import type { HsnRow, LedgerRow } from '../lib/api';
-import { AlertTriangle, CheckCircle2, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Paperclip, Plus, Settings2, Trash2 } from 'lucide-react';
+import { DocumentAttachments } from '../components/DocumentAttachments';
+import { CustomFieldsPanel } from '../components/CustomFieldsPanel';
 
 interface Line { hsnCode: string; description: string; qty: number; rate: number; gstRate: number }
 
@@ -27,6 +29,8 @@ export const PurchaseInvoiceView: React.FC = () => {
   const [itcEligible, setItcEligible] = useState(true);
   const [lines, setLines] = useState<Line[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [attachmentFor,setAttachmentFor]=useState<PurchaseRow|null>(null);
+  const [customFor,setCustomFor]=useState<PurchaseRow|null>(null);
 
   const ledgers = useApi<LedgerRow[]>('/ledgers');
   const hsn = useApi<HsnRow[]>('/hsn-codes');
@@ -212,6 +216,7 @@ export const PurchaseInvoiceView: React.FC = () => {
                 <th className="px-2 py-1.5 font-bold text-right">IGST</th>
                 <th className="px-2 py-1.5 font-bold text-right">Total</th>
                 <th className="px-2 py-1.5 font-bold">ITC</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -228,10 +233,11 @@ export const PurchaseInvoiceView: React.FC = () => {
                   <td className="px-2 py-1 text-right font-mono">{money(p.igst_amount)}</td>
                   <td className="px-2 py-1 text-right font-mono font-bold">{money(p.invoice_total)}</td>
                   <td className="px-2 py-1">{p.itc_eligible ? 'Eligible' : 'Blocked'}</td>
+                  <td className="flex gap-1 px-2 py-1"><button className="erp-btn min-h-11" title="Custom purchase fields" onClick={()=>setCustomFor(p)}><Settings2 className="h-4 w-4 text-violet-700"/></button><button className="erp-btn min-h-11" title="Attach supplier invoice evidence" onClick={()=>setAttachmentFor(p)}><Paperclip className="h-4 w-4 text-blue-700"/></button></td>
                 </tr>
               ))}
               {!invoices.loading && invoices.rows.length === 0 && (
-                <tr><td colSpan={11} className="px-2 py-5 text-center text-slate-400">
+                <tr><td colSpan={12} className="px-2 py-5 text-center text-slate-400">
                   Nothing booked yet
                 </td></tr>
               )}
@@ -239,6 +245,8 @@ export const PurchaseInvoiceView: React.FC = () => {
           </table>
         </div>
       </div>
+      {attachmentFor&&<DocumentAttachments docType="purchase_invoice" docId={attachmentFor.id} label={attachmentFor.our_ref} onClose={()=>setAttachmentFor(null)}/>}
+      {customFor&&<CustomFieldsPanel entityType="purchase_invoice" entityId={customFor.id} label={customFor.our_ref} onClose={()=>setCustomFor(null)}/>}
     </div>
   );
 };

@@ -30,6 +30,11 @@ import { applyReprocessReceipt } from './reprocess.ts';
 import { millReadinessRouter } from './mill-readiness.ts';
 import { onboardingRouter } from './onboarding.ts';
 import { globalSearchRouter } from './global-search.ts';
+import { commercialFoundationRouter } from './commercial-foundation.ts';
+import { productionOperationsRouter } from './production-operations.ts';
+import { attachmentRouter } from './attachments.ts';
+import { platformRouter, publicPlatformRouter } from './platform.ts';
+import { editionRouter } from './editions.ts';
 
 const uuid = z.string().uuid();
 const money = z.coerce.number().finite();
@@ -55,18 +60,25 @@ export function buildRoutes() {
   const api = Router();
 
   api.use(publicAuthRouter());
+  api.use(publicPlatformRouter());
   api.use(requireAuth);
   api.use('/configuration', configurationRouter());
   api.use(identityRouter());
   api.use(millReadinessRouter());
   api.use('/onboarding', onboardingRouter());
   api.use('/global-search', globalSearchRouter());
+  api.use(commercialFoundationRouter());
+  api.use(attachmentRouter());
+  api.use(platformRouter());
+  api.use(editionRouter());
 
   // ------------------------------------------------------------- documents --
 
   const withCtx = <T>(req: any, fn: (ctx: Ctx) => Promise<T>) => {
-    const { tenantId, userId } = req.session!;
-    return withTenant(tenantId, userId, db => fn({ db, tenantId, userId, fy: fyLabel() }));
+    const { tenantId, userId, activeLocationId } = req.session!;
+    return withTenant(tenantId, userId, db => fn({
+      db, tenantId, userId, activeLocationId, fy: fyLabel()
+    }));
   };
 
   /**
@@ -262,8 +274,11 @@ export function buildRoutes() {
   const allocation = z.object({
     salesInvoiceId: uuid.nullish(),
     purchaseInvoiceId: uuid.nullish(),
+    openingOutstandingId: uuid.nullish(),
     amount: money.positive()
-  });
+  }).refine(value => [value.salesInvoiceId,value.purchaseInvoiceId,value.openingOutstandingId]
+      .filter(Boolean).length === 1,
+    'an allocation must name exactly one live or opening bill');
   const paymentDeduction = z.object({
     salesInvoiceId: uuid.nullish(),
     purchaseInvoiceId: uuid.nullish(),
@@ -958,6 +973,7 @@ export function buildRoutes() {
   });
 
   api.use(operationalReportRouter());
+  api.use(productionOperationsRouter());
 
   // Last: its /:resource wildcard would otherwise shadow every route above.
   api.use('/', resourceRouter());

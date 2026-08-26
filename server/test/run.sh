@@ -31,8 +31,16 @@ if ! REBUILD="$("${SERVER}/../link-erp/db/rebuild.sh" "${DB}" 2>&1)"; then
 fi
 printf '%s\n' "${REBUILD}" | grep -E 'invariants:|FAIL' || true
 
+# PostgreSQL roles are cluster-wide, while each suite rebuilds only its own
+# database. The browser gate also uses link_erp_app and deliberately changes
+# its password; provision this suite's credential every run so gate order can
+# never decide whether /health starts.
+TEST_APP_PASSWORD='server-test-only-password'
+psql -q -v ON_ERROR_STOP=1 -d "${DB}" -v app_db_password="${TEST_APP_PASSWORD}" <<'SQL'
+alter role link_erp_app login password :'app_db_password';
+SQL
 
-export DATABASE_URL="postgresql://link_erp_app@/${DB}?host=${PGHOST}&port=${PGPORT}"
+export DATABASE_URL="postgresql://link_erp_app:${TEST_APP_PASSWORD}@/${DB}?host=${PGHOST}&port=${PGPORT}"
 export JWT_SECRET="${JWT_SECRET:-test-only-secret}"
 export JWT_KEY_ID="${JWT_KEY_ID:-test-current}"
 export JWT_PREVIOUS_SECRETS="${JWT_PREVIOUS_SECRETS:-test-only-previous-secret-at-least-32-characters-long}"

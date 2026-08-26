@@ -70,7 +70,7 @@ const RESOURCES: Record<string, Resource> = {
   },
   racks: {
     table: 'rack_master',
-    columns: ['code', 'name', 'location'],
+    columns: ['code', 'name', 'location', 'business_location_id'],
     orderBy: 'code', area: 'masters', search: ['code', 'name', 'location'],
     conflict: ['tenant_id', 'code']
   },
@@ -133,8 +133,11 @@ export function resourceRouter() {
       if (!spec) return res.status(404).json({ error: 'unknown resource' });
       requireWrite(spec.area)(req, res, async () => {
         try {
-          const { tenantId, userId } = req.session!;
-          const body = req.body as Record<string, unknown>;
+          const { tenantId, userId, activeLocationId } = req.session!;
+          const body = { ...(req.body as Record<string, unknown>) };
+          if (req.params.resource === 'racks' && body.business_location_id === undefined) {
+            body.business_location_id = activeLocationId;
+          }
           const present = spec.columns.filter(c => body[c] !== undefined);
           if (present.length === 0) return res.status(400).json({ error: 'no known columns supplied' });
 

@@ -14,6 +14,7 @@ export interface Ctx {
   tenantId: string;
   userId: string;
   fy: string;
+  activeLocationId?: string;
 }
 
 // ------------------------------------------------------------------ inward --
@@ -92,9 +93,11 @@ export async function postGreyInward(
     ctx.db,
     `insert into piece (tenant_id, barcode, quality_id, design_id, grade_code, lot_no,
                         status, held_by_ledger_id, grey_qty, current_qty, rack_code,
-                        grey_weight_kg, current_weight_kg)
+                        grey_weight_kg, current_weight_kg,business_location_id)
      select $1, x.barcode, x.quality_id, x.design_id, x.grade_code, x.lot_no,
-            'grey_in_stock', null, x.qty, x.qty, x.rack_code, x.weight_kg, x.weight_kg
+            'grey_in_stock', null, x.qty, x.qty, x.rack_code, x.weight_kg, x.weight_kg,
+            coalesce((select r.business_location_id from rack_master r
+                       where r.tenant_id=$1 and r.code=x.rack_code),$10::uuid)
        from unnest($2::text[], $3::uuid[], $4::uuid[], $5::text[], $6::text[],
                    $7::numeric[], $8::text[], $9::numeric[])
             as x(barcode, quality_id, design_id, grade_code, lot_no, qty, rack_code, weight_kg)
@@ -108,7 +111,8 @@ export async function postGreyInward(
       lines.map(l => l.lotNo || header.lotNo),
       lines.map(l => l.checkedQty),
       lines.map(l => l.rackCode ?? header.rackCode ?? null),
-      lines.map(l => l.netWeightKg ?? null)
+      lines.map(l => l.netWeightKg ?? null),
+      ctx.activeLocationId ?? null
     ]
   );
 

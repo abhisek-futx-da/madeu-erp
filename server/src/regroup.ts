@@ -24,6 +24,7 @@ interface PieceRow {
   quality_id: string; design_id: string | null; grade_code: string;
   lot_no: string; uom: string; grey_qty: number; finish_qty: number | null;
   grey_cost: number; jobwork_cost: number; other_cost: number; cost_posted: boolean;
+  business_location_id: string; rack_code: string | null;
 }
 
 const COST_FIELDS = ['grey_cost', 'jobwork_cost', 'other_cost'] as const;
@@ -33,7 +34,8 @@ type Costs = Record<CostField, number>;
 const SELECT_PIECE = `select p.id, p.barcode, p.status::text, p.current_qty, p.quality_id,
                              p.design_id, p.grade_code, p.lot_no, p.uom,
                              p.grey_qty, p.finish_qty,
-                             p.grey_cost, p.jobwork_cost, p.other_cost, p.cost_posted
+                             p.grey_cost, p.jobwork_cost, p.other_cost, p.cost_posted,
+                             p.business_location_id,p.rack_code
                         from piece p`;
 
 function assertCuttable(pieces: PieceRow[]) {
@@ -187,16 +189,16 @@ export async function splitPiece(
     ctx.db,
     `insert into piece (tenant_id, barcode, quality_id, design_id, grade_code, lot_no,
                         status, grey_qty, finish_qty, current_qty, uom,
-                        grey_cost, jobwork_cost, other_cost)
+                        grey_cost, jobwork_cost, other_cost,business_location_id,rack_code)
      select $1, x.barcode, $2, $3, $4, $5, $6::piece_status, x.grey_qty, x.finish, x.qty, $7,
-            x.grey, x.jobwork, x.other
-       from unnest($8::text[], $9::numeric[], $10::numeric[], $11::numeric[], $12::numeric[],
-                   $13::numeric[], $14::numeric[])
+            x.grey, x.jobwork, x.other,$8,$9
+       from unnest($10::text[], $11::numeric[], $12::numeric[], $13::numeric[], $14::numeric[],
+                   $15::numeric[], $16::numeric[])
             as x(barcode, qty, grey_qty, finish, grey, jobwork, other)
      returning id, barcode`,
     [
       ctx.tenantId, parent.quality_id, parent.design_id, parent.grade_code, parent.lot_no,
-      parent.status, parent.uom,
+      parent.status, parent.uom, parent.business_location_id, parent.rack_code,
       barcodes, qtys.slice(0, barcodes.length), greyQtys.slice(0, barcodes.length), finish?.slice(0, barcodes.length) ?? null, shares.grey_cost.slice(0, barcodes.length), shares.jobwork_cost.slice(0, barcodes.length), shares.other_cost.slice(0, barcodes.length)
     ]
   );
@@ -289,6 +291,10 @@ export async function mergePieces(
       `${odd.map(p => p.barcode).join(', ')} differ from ${first.barcode}`
     );
   }
+  if (new Set(parents.map(p => p.business_location_id)).size !== 1) {
+    throw new Error('pieces from different business locations cannot be joined');
+  }
+  const commonRack = parents.every(p => p.rack_code === first.rack_code) ? first.rack_code : null;
 
   const intoBarcode = input.intoBarcode.trim();
   if (!intoBarcode) throw new Error('the merged piece needs a barcode');
@@ -312,12 +318,13 @@ export async function mergePieces(
     ctx.db,
     `insert into piece (tenant_id, barcode, quality_id, design_id, grade_code, lot_no,
                         status, grey_qty, finish_qty, current_qty, uom,
-                        grey_cost, jobwork_cost, other_cost)
-     values ($1,$2,$3,$4,$5,$6,$7::piece_status,$8,$9,$10,$11,$12,$13,$14) returning id`,
+                        grey_cost, jobwork_cost, other_cost,business_location_id,rack_code)
+     values ($1,$2,$3,$4,$5,$6,$7::piece_status,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning id`,
     [
       ctx.tenantId, intoBarcode, first.quality_id, first.design_id, first.grade_code,
       first.lot_no, first.status, greyQty, finish, qty, first.uom,
-      costs.grey_cost, costs.jobwork_cost, costs.other_cost
+      costs.grey_cost, costs.jobwork_cost, costs.other_cost,
+      first.business_location_id, commonRack
     ]
   );
   if (!child) throw new Error('merged piece insert returned nothing');

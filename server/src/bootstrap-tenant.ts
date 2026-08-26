@@ -124,6 +124,7 @@ const DOCUMENT_SERIES: Array<[string, string]> = [
   ['stock_count', 'SC/'], ['write_off', 'WO/'], ['grey_return', 'GR/'],
   ['dyeing_return', 'DPR/'], ['customer_return', 'CR/'], ['piece_regroup', 'RG/'],
   ['dyeing_reprocess', 'RP/'], ['dyeing_reprocess_receipt', 'RR/'],
+  ['opening_stock', 'OS/'], ['location_transfer', 'LT/'],
   ['eway_bill', 'EWB/'], ['voucher_purchase', 'PUR/'], ['voucher_sales', 'SAL/'],
   ['voucher_jobwork', 'JOB/'], ['voucher_receipt', 'RCT/'], ['voucher_payment', 'PMT/'],
   ['voucher_journal', 'JV/'], ['voucher_credit_note', 'CNV/'], ['voucher_debit_note', 'DNV/']
@@ -183,6 +184,12 @@ export async function bootstrapTenant(db: BootstrapDb, raw: BootstrapInput): Pro
     await db.query(
       `insert into membership (tenant_id, user_id, role, is_active) values ($1,$2,'owner',true)`,
       [tenantId, ownerId]
+    );
+    await db.query(
+      `insert into tenant_edition(tenant_id,edition,activated_by)
+       select $1,x,$2 from unnest($3::text[]) x
+       on conflict(tenant_id,edition) do update set activated_by=excluded.activated_by`,
+      [tenantId, ownerId, ['weaving','dyeing','exports','logistics','garments']]
     );
 
     const controlIds = new Map<string, string>();

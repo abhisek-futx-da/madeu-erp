@@ -38,10 +38,15 @@ import { PackingListView } from './modules/PackingListView';
 import { MillIntegrationView } from './modules/MillIntegrationView';
 import { OnboardingView } from './modules/OnboardingView';
 import { GlobalSearchView } from './modules/GlobalSearchView';
+import { CommercialFoundationView } from './modules/CommercialFoundationView';
+import { LocationTransferView } from './modules/LocationTransferView';
+import { PlatformStudioView } from './modules/PlatformStudioView';
+import { EditionWorkspaceView } from './modules/EditionWorkspaceView';
 
 import { auth, type Session } from './lib/api';
 import { clearApiCache } from './lib/useApi';
 import { LogOut } from 'lucide-react';
+import { LocationSwitcher } from './components/LocationSwitcher';
 
 export const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -147,6 +152,9 @@ export const App: React.FC = () => {
       {module === 'password' && <PasswordView />}
       {module === 'users' && <UserAdminView session={session} />}
       {module === 'company_setup' && <CompanySetupView />}
+      {module === 'go_live_readiness' && <CommercialFoundationView session={session} />}
+      {module === 'platform_studio' && <PlatformStudioView />}
+      {module.startsWith('edition_') && <EditionWorkspaceView edition={module.replace('edition_','') as 'weaving'|'dyeing'|'exports'|'logistics'|'garments'} session={session} />}
       {module === 'profit_loss' && <StatementView kind="profit_loss" />}
       {module === 'balance_sheet' && <StatementView kind="balance_sheet" />}
       {module === 'delivery_challans' && <DeliveryChallanView />}
@@ -163,6 +171,7 @@ export const App: React.FC = () => {
       {module === 'cut_pack' && <ScanDocumentView kind="pack" />}
       {module === 'regroup' && <PieceRegroupView session={session} />}
       {module === 'stock_count' && <StockCountView />}
+      {module === 'location_transfers' && <LocationTransferView session={session} />}
       {module === 'dispatch' && <ScanDocumentView kind="dispatch" />}
       {module === 'packing_lists' && <PackingListView />}
       {module === 'purchase_orders' && <PurchaseOrderView />}
@@ -196,6 +205,8 @@ export const App: React.FC = () => {
         </div>
         <div className="bg-[#cbd5e1] border-b border-[#94a3b8] px-3 py-1 flex items-center justify-end gap-2 text-xs min-h-11">
           <OfflineBadge />
+          <LocationSwitcher current={session.activeLocation ?? null} onChanged={activeLocation =>
+            setSession(current => current ? { ...current,activeLocation } : current)} />
           <span className="bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded border border-emerald-300 font-mono font-bold">
             {session.role}
           </span>
