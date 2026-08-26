@@ -18,6 +18,7 @@ import { operationalReportRouter } from './report-routes.ts';
 import { approveDocument, rejectDocument } from './approvals.ts';
 import { splitPiece, mergePieces, lineageOf } from './regroup.ts';
 import { answerDeclaration, createPortalUser } from './portal.ts';
+import { retrySubmission, cancelSubmission, releaseStale } from './provider-queue.ts';
 import {
   openCount, addScans, removeScan, exceptionsFor, submitCount, applyStockCount
 } from './stockcount.ts';
@@ -1067,6 +1068,75 @@ export function buildRoutes() {
         return { userId: id, disabled: true };
       });
       res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  // ---------------------------------------------- statutory submissions --
+
+  /**
+   * The operator's view of every statutory submission and why it is stuck.
+   * Nothing here has been accepted by a government portal; see
+   * docs/GSP_IRP_READINESS.md for what is and is not proven.
+   */
+  api.get('/provider-queue', async (req, res, next) => {
+    try {
+      const q = z.object({
+        state: z.enum(['queued', 'in_flight', 'succeeded', 'failed', 'abandoned', 'cancelled', 'open', 'all'])
+          .default('open')
+      }).parse(req.query);
+      const { tenantId, userId } = req.session!;
+      const rows = await withTenant(tenantId, userId, db =>
+        many(db,
+          `select * from v_provider_queue
+            where ($1::text = 'all'
+                   or ($1::text = 'open' and state in ('queued','in_flight','failed','abandoned'))
+                   or state = $1::text)
+            order by created_at desc limit 500`,
+          [q.state]));
+      res.json(rows);
+    } catch (e) { next(e); }
+  });
+
+  api.get('/provider-queue/:id', async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const { tenantId, userId } = req.session!;
+      const out = await withTenant(tenantId, userId, async db => ({
+        submission: await one(db, 'select * from v_provider_queue where submission_id = $1', [id]),
+        attempts: await many(db,
+          'select * from v_provider_attempt where submission_id = $1 order by attempt_no', [id])
+      }));
+      if (!out.submission) return res.status(404).json({ error: 'no such submission' });
+      res.json(out);
+    } catch (e) { next(e); }
+  });
+
+  api.post('/provider-queue/:id/retry', requireWrite('accounts'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const { tenantId, userId } = req.session!;
+      res.json(await withTenant(tenantId, userId, db =>
+        retrySubmission({ db, tenantId, userId }, id)));
+    } catch (e) { next(e); }
+  });
+
+  api.post('/provider-queue/:id/cancel', requireWrite('accounts'), async (req, res, next) => {
+    try {
+      const id = uuid.parse(req.params.id);
+      const body = z.object({ reason: z.string().trim().min(1).max(300) }).parse(req.body);
+      const { tenantId, userId } = req.session!;
+      res.json(await withTenant(tenantId, userId, db =>
+        cancelSubmission({ db, tenantId, userId }, id, body.reason)));
+    } catch (e) { next(e); }
+  });
+
+  /** A worker that claimed work and died leaves it in flight; this frees it. */
+  api.post('/provider-queue/release-stale', requireWrite('accounts'), async (req, res, next) => {
+    try {
+      const { tenantId, userId } = req.session!;
+      const released = await withTenant(tenantId, userId, db =>
+        releaseStale({ db, tenantId, userId }));
+      res.json({ released });
     } catch (e) { next(e); }
   });
 

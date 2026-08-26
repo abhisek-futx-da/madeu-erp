@@ -1,5 +1,6 @@
 import { one, withTenant } from './db.ts';
 import { FetchTransport, IrpClient, type IrpCredentials } from './irp.ts';
+import { enqueue, recordAttempt } from './provider-queue.ts';
 
 /**
  * Submits a stored e-invoice payload to the IRP and records the outcome.
@@ -54,8 +55,24 @@ export async function submitInvoiceToIrp(tenantId: string, userId: string, invoi
       };
     }
 
+    // Queued rather than fired: the attempt is recorded, bounded and
+    // idempotent, so an ambiguous timeout cannot register the same invoice
+    // twice and a failure leaves a history rather than one overwritten string.
+    const submission = await enqueue(
+      { db, tenantId, userId },
+      { channel: 'einvoice', docType: 'sales_invoice', docId: invoiceId }
+    );
+
     const client = new IrpClient(creds, new FetchTransport(creds.baseUrl));
+    const startedAt = new Date();
     const result = await client.generateIrn(row.payload);
+    await recordAttempt(
+      { db, tenantId, userId }, submission.id, submission.attempts + 1,
+      result.ok
+        ? { ok: true, code: 'ACCEPTED', message: `IRN ${result.irn}` }
+        : { ok: false, code: result.code, message: result.message, retryable: result.retryable },
+      startedAt
+    );
 
     if (result.ok) {
       await db.query(
