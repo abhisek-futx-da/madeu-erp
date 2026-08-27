@@ -18,12 +18,22 @@ export interface ReportSpec extends ListSpec {
    * number that looks authoritative and means nothing.
    */
   numeric: string[];
+  /**
+   * The column a reader wants subtotals by — "TOTAL OF Bombay Crimpers Pvt.
+   * Ltd." A flat list with one figure at the bottom is not how anyone reads a
+   * report covering eleven process houses. The order always leads with this
+   * column, or the groups would be interleaved and the subtotals nonsense.
+   */
+  groupBy?: string;
 }
 
 const spec = (
   view: string,
   title: string,
-  o: { date?: string; search?: string[]; order: string; numeric?: string[] }
+  o: {
+    date?: string; search?: string[]; order: string;
+    numeric?: string[]; groupBy?: string;
+  }
 ): ReportSpec => ({
   from: view,
   select: '*',
@@ -31,7 +41,8 @@ const spec = (
   dateColumn: o.date,
   search: o.search ?? [],
   orderBy: o.order,
-  numeric: o.numeric ?? []
+  numeric: o.numeric ?? [],
+  groupBy: o.groupBy
 });
 
 export const REPORTS: Record<string, ReportSpec> = {
@@ -59,15 +70,18 @@ export const REPORTS: Record<string, ReportSpec> = {
   // -------------------------------------------------------------- position --
   'stock-summary': spec('v_stock_summary', 'Stock Summary', {
     search: ['quality', 'grade', 'status'], order: 'quality, grade, status',
+    groupBy: 'quality',
     numeric: ['pcs', 'qty', 'weight_kg']
   }),
   'stock-valuation': spec('v_stock_valuation', 'Stock Valuation', {
     search: ['quality', 'grade', 'status'], order: 'quality, grade, status',
+    groupBy: 'quality',
     numeric: ['pcs', 'qty', 'grey_cost', 'jobwork_cost', 'total_cost']
     // cost_per_mtr is a ratio; the footer derives it from the totals instead.
   }),
   'process-stock': spec('v_process_stock', 'Process Stock', {
     search: ['process_house', 'quality', 'stage'], order: 'process_house, quality',
+    groupBy: 'process_house',
     numeric: ['pcs', 'qty', 'weight_kg']
   }),
   'po-pending': spec('v_po_pending', 'Purchase Order Pending', {
@@ -88,13 +102,15 @@ export const REPORTS: Record<string, ReportSpec> = {
   'stock-count-variance': spec('v_stock_count_variance', 'Stock Count Variance', {
     date: 'count_date',
     search: ['count_no', 'barcode', 'quality', 'lot_no', 'reason', 'kind'],
-    order: 'count_date desc, count_no, barcode',
+    order: 'count_no, barcode',
+    groupBy: 'count_no',
     numeric: ['system_qty', 'counted_qty', 'value']
   }),
 
   // ------------------------------------------------------------- performance --
   shrinkage: spec('v_shrinkage_by_process_house', 'Shrinkage By Process House', {
     search: ['process_house', 'quality'], order: 'process_house, quality',
+    groupBy: 'process_house',
     numeric: ['pieces', 'issued_qty', 'received_qty',
               'issued_weight_kg', 'received_weight_kg']
     // shrinkage_pct is a ratio of the totals, not a sum of the ratios.
@@ -109,6 +125,7 @@ export const REPORTS: Record<string, ReportSpec> = {
   }),
   'process-house-scorecard': spec('v_process_house_scorecard', 'Process House Scorecard', {
     search: ['process_house'], order: 'process_house',
+    groupBy: 'process_house',
     numeric: ['receipts', 'pieces', 'issued_qty', 'received_qty']
   }),
 
@@ -116,7 +133,8 @@ export const REPORTS: Record<string, ReportSpec> = {
   'unbilled-receipts': spec('v_unbilled_receipts', 'Received But Not Billed', {
     date: 'entry_date',
     search: ['entry_no', 'challan_no', 'party', 'party_code', 'kind'],
-    order: 'entry_date, entry_no',
+    order: 'party, entry_date, entry_no',
+    groupBy: 'party',
     numeric: ['received_value', 'billed_value', 'unbilled_value']
   }),
   'double-booked-purchases': spec('v_double_booked_purchases', 'Bills Booked Twice (Before The Fix)', {
@@ -128,14 +146,16 @@ export const REPORTS: Record<string, ReportSpec> = {
   'sales-register': spec('v_sales_register', 'Sales Register', {
     date: 'invoice_date',
     search: ['invoice_no', 'party', 'party_code', 'party_gstin', 'voucher_no', 'status', 'broker'],
-    order: 'invoice_date, invoice_no',
+    order: 'party, invoice_date, invoice_no',
+    groupBy: 'party',
     numeric: ['taxable_value', 'cgst_amount', 'sgst_amount', 'igst_amount',
               'tax_amount', 'round_off', 'invoice_total', 'brokerage_amount']
   }),
   'purchase-register': spec('v_purchase_register', 'Purchase Register', {
     date: 'invoice_date',
     search: ['our_ref', 'supplier_invoice_no', 'party', 'party_code', 'party_gstin', 'status', 'broker'],
-    order: 'invoice_date, our_ref',
+    order: 'party, invoice_date, our_ref',
+    groupBy: 'party',
     numeric: ['taxable_value', 'cgst_amount', 'sgst_amount', 'igst_amount',
               'tax_amount', 'round_off', 'invoice_total']
   }),
@@ -147,7 +167,8 @@ export const REPORTS: Record<string, ReportSpec> = {
     numeric: ['debit', 'credit']
   }),
   'trial-balance': spec('v_trial_balance', 'Trial Balance', {
-    search: ['code', 'name', 'control_account'], order: 'code',
+    search: ['code', 'name', 'control_account'], order: 'control_account, code',
+    groupBy: 'control_account',
     numeric: ['total_debit', 'total_credit']
     // balance nets to zero across the whole report and says nothing in a footer.
   }),
@@ -164,8 +185,22 @@ export const REPORTS: Record<string, ReportSpec> = {
     date: 'voucher_date',
     search: ['code', 'party', 'voucher_no', 'voucher_type', 'narration'],
     order: 'party, voucher_date, voucher_no',
+    groupBy: 'party',
     numeric: ['debit', 'credit']
     // running_balance is cumulative; the ledger report carries the opening.
+  }),
+  'cash-and-bank-book': spec('v_cash_and_bank_book', 'Cash & Bank Book', {
+    date: 'entry_date',
+    search: ['voucher_no', 'party', 'account', 'instrument_no', 'narration', 'kind', 'mode'],
+    order: 'account, entry_date, voucher_no',
+    groupBy: 'account',
+    numeric: ['inflow', 'outflow']
+  }),
+  'contra-entries': spec('v_contra_entry', 'Contra Entries', {
+    date: 'entry_date',
+    search: ['entry_no', 'from_account', 'to_account', 'instrument_no', 'narration'],
+    order: 'entry_date, entry_no',
+    numeric: ['amount']
   }),
   'cash-book': spec('v_cash_book', 'Cash Book', {
     date: 'payment_date',
@@ -177,18 +212,21 @@ export const REPORTS: Record<string, ReportSpec> = {
     date: 'invoice_date',
     search: ['code', 'party', 'invoice_no'],
     order: 'party, invoice_date, invoice_no',
+    groupBy: 'party',
     numeric: ['invoice_total', 'paid', 'credited', 'outstanding']
   }),
   'outstanding-purchases': spec('v_outstanding_purchases', 'Outstanding Payables', {
     date: 'invoice_date',
     search: ['party', 'supplier_invoice_no', 'our_ref'],
     order: 'party, invoice_date',
+    groupBy: 'party',
     numeric: ['invoice_total', 'paid', 'outstanding']
   }),
   'receivable-ageing': spec('v_receivable_ageing', 'Receivable Ageing', {
     date: 'invoice_date',
     search: ['code', 'party', 'invoice_no', 'bucket'],
     order: 'bucket, party, invoice_date',
+    groupBy: 'bucket',
     numeric: ['invoice_total']
   }),
   'tds-summary': spec('v_tds_summary', 'TDS Deducted', {
@@ -261,10 +299,47 @@ export async function reportRows(
   );
 }
 
+export interface ReportGroup {
+  label: string;
+  rows: number;
+  totals: Record<string, number>;
+}
+
 export interface ReportTotals {
   /** Rows in the whole filtered report, not in the page on screen. */
   total: number;
   totals: Record<string, number>;
+  /** Subtotals by the report's own grouping column, where it has one. */
+  groups?: ReportGroup[];
+}
+
+/**
+ * Subtotals per group, over the whole filtered report. Capped: a report that
+ * groups into thousands is not one anybody reads by group, and returning a
+ * subtotal per row would be slower and less useful than the rows themselves.
+ */
+const MAX_GROUPS = 500;
+
+export async function reportGroups(
+  db: Db, report: ReportSpec, q: ListQuery
+): Promise<ReportGroup[] | undefined> {
+  if (!report.groupBy || report.numeric.length === 0) return undefined;
+  const { where, params } = whereFor(report, q);
+  const sums = report.numeric.map(c => `coalesce(sum(${c}), 0)::float8 as ${c}`).join(', ');
+  const rows = await many<Record<string, unknown>>(
+    db,
+    `select coalesce(${report.groupBy}::text, '(none)') as group_label,
+            count(*)::int as group_rows, ${sums}
+       from ${report.from} ${where}
+      group by 1 order by 1 limit ${MAX_GROUPS + 1}`,
+    params
+  );
+  if (rows.length > MAX_GROUPS) return undefined;
+  return rows.map(row => ({
+    label: String(row.group_label),
+    rows: Number(row.group_rows),
+    totals: Object.fromEntries(report.numeric.map(c => [c, Number(row[c] ?? 0)]))
+  }));
 }
 
 /**
@@ -287,7 +362,11 @@ export async function reportTotals(
   const row = rows[0] ?? {};
   const totals: Record<string, number> = {};
   for (const c of report.numeric) totals[c] = Number(row[c] ?? 0);
-  return { total: Number(row.row_count ?? 0), totals };
+  return {
+    total: Number(row.row_count ?? 0),
+    totals,
+    groups: await reportGroups(db, report, q)
+  };
 }
 
 /** What the screens need to know before they can offer the right controls. */
@@ -298,6 +377,8 @@ export function reportCatalogue() {
     /** False for a position as on today; the screen hides its date boxes. */
     hasPeriod: Boolean(r.dateColumn),
     searchable: r.search.length > 0,
-    totals: r.numeric
+    totals: r.numeric,
+    /** The column subtotals break on, so a screen can label them. */
+    groupBy: r.groupBy ?? null
   }));
 }

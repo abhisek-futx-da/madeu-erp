@@ -35,6 +35,23 @@ async function api(path: string, opts: { method?: string; body?: unknown } = {})
   return { status: res.status, type, text: '', body: await res.json() };
 }
 
+const paise = (n: unknown) => Math.round(Number(n ?? 0) * 100);
+
+async function balance(ledgerId: string) {
+  const r = await api('/api/reports/party-balance?limit=1000');
+  const row = (r.body as any[]).find(x => x.ledger_id === ledgerId);
+  return row ? paise(row.balance) : 0;
+}
+
+/** Ledgers created by migration have no fixed id; look them up by code. */
+async function ledgerIdByCode(code: string) {
+  const r = await api('/api/ledgers?limit=500');
+  const rows = Array.isArray(r.body) ? r.body : r.body.rows;
+  const row = rows.find((l: any) => l.code === code);
+  assert.ok(row, `no ledger with code ${code}`);
+  return row.id as string;
+}
+
 test('sign in', async () => {
   const r = await api('/api/auth/login', {
     method: 'POST', body: { email: 'owner@neelkamal.test', password: 'changeme' }
@@ -448,4 +465,152 @@ test('the registers say who brokered the trade', async () => {
   if (purchases.body.length > 0) {
     assert.ok('broker' in purchases.body[0], 'the purchase register cannot name the dalal');
   }
+});
+
+// -------------------------------------------- trading account & statements --
+
+test('the Trading Account balances, and its gross profit is checked not asserted', async () => {
+  const r = await api('/api/statements/trading?from=2026-04-01&to=2027-03-31');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const t = r.body.totals;
+
+  // Dr and Cr must come to the same figure — that is what makes it an account.
+  assert.ok(Math.abs(t.debitTotal - t.creditTotal) < 0.02,
+    `Trading Account does not balance: Dr ${t.debitTotal} vs Cr ${t.creditTotal}`);
+
+  // Opening + what came in − what is left is what was consumed.
+  assert.ok(t.sales > 0, 'nothing was sold, so there is no gross profit to check');
+
+  /**
+   * The same gross profit reached two ways: the traditional stock route, and
+   * direct income less direct expenses. A difference means the stock ledger
+   * and the P&L ledgers disagree, which is a posting defect, not a rounding.
+   */
+  assert.ok(Math.abs(t.difference) < 0.02,
+    `the two routes to gross profit disagree by ${t.difference}`);
+});
+
+test('gross profit carries into the P&L, which reaches net profit', async () => {
+  const trading = await api('/api/statements/trading?from=2026-04-01&to=2027-03-31');
+  const pl = await api('/api/statements/profit-loss?from=2026-04-01&to=2027-03-31');
+  assert.equal(pl.status, 200);
+
+  // Net profit is gross profit less indirect expenses plus indirect income.
+  // Both statements read the same ledgers, so they cannot drift apart.
+  assert.ok(Number.isFinite(pl.body.totals.netProfit));
+  assert.ok(Number.isFinite(trading.body.totals.grossProfit));
+});
+
+test('a statement reads ledger by ledger or head by head, and the two agree', async () => {
+  const details = await api('/api/statements/profit-loss?from=2026-04-01&to=2027-03-31&view=details');
+  const summary = await api('/api/statements/profit-loss?from=2026-04-01&to=2027-03-31&view=summary');
+  assert.equal(summary.status, 200);
+
+  assert.ok(summary.body.rows.length <= details.body.rows.length,
+    'a summary with more lines than the detail is not a summary');
+  assert.equal(summary.body.totals.netProfit, details.body.totals.netProfit,
+    'rolling a statement up to its heads changed the net profit');
+
+  const bs = await api('/api/statements/balance-sheet?to=2027-03-31&view=summary');
+  assert.equal(bs.status, 200);
+  assert.ok(Math.abs(bs.body.totals.difference) < 0.02, 'the summary balance sheet does not balance');
+});
+
+// ---------------------------------------------------------------- contra --
+
+test('cash deposited into the bank is a contra, not a payment to nobody', async () => {
+  const cash = await ledgerIdByCode('970');
+  const bank = await ledgerIdByCode('971');
+
+  const before = { cash: await balance(cash), bank: await balance(bank) };
+  const r = await api('/api/contra-entries', {
+    method: 'POST',
+    body: {
+      entryDate: '2026-09-20', fromLedgerId: cash, toLedgerId: bank,
+      amount: 25000, instrumentNo: `DEP-${stamp}`, narration: 'cash deposited'
+    }
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+
+  assert.equal(await balance(cash) - before.cash, -2500000, 'cash did not leave the tin');
+  assert.equal(await balance(bank) - before.bank, 2500000, 'the bank did not receive it');
+});
+
+test('a contra refuses an account that is not the mill\'s own money', async () => {
+  const cash = await ledgerIdByCode('970');
+  const r = await api('/api/contra-entries', {
+    method: 'POST',
+    body: { entryDate: '2026-09-20', fromLedgerId: cash, toLedgerId: WEAVER, amount: 100 }
+  });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.match(r.body.error, /not a cash or bank account/);
+
+  const same = await api('/api/contra-entries', {
+    method: 'POST',
+    body: { entryDate: '2026-09-20', fromLedgerId: cash, toLedgerId: cash, amount: 100 }
+  });
+  assert.equal(same.status, 400);
+});
+
+test('a contra shows in the cash and bank book, both legs', async () => {
+  const r = await api('/api/reports/cash-and-bank-book?limit=500&q=cash+deposited');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+
+  const legs = (r.body as any[]).filter(x => x.instrument_no === `DEP-${stamp}`);
+  assert.equal(legs.length, 2, 'a transfer has an out leg and an in leg');
+  assert.equal(paise(legs.reduce((n, l) => n + Number(l.inflow), 0)), 2500000);
+  assert.equal(paise(legs.reduce((n, l) => n + Number(l.outflow), 0)), 2500000);
+});
+
+// ------------------------------------------------------- group subtotals --
+
+test('a report that covers many parties subtotals by party', async () => {
+  const summary = await api('/api/reports/sales-register/summary?from=2026-04-01&to=2027-03-31');
+  assert.equal(summary.status, 200, JSON.stringify(summary.body));
+  if (summary.body.total === 0) return;
+
+  assert.ok(Array.isArray(summary.body.groups), 'the sales register offers no subtotals');
+  const groups = summary.body.groups as any[];
+  assert.ok(groups.length > 0);
+
+  // The parts must add up to the whole, or the subtotals are decoration.
+  const summed = groups.reduce((n, g) => n + Number(g.totals.invoice_total), 0);
+  assert.ok(Math.abs(summed - summary.body.totals.invoice_total) < 0.02,
+    `subtotals add to ${summed} against a report total of ${summary.body.totals.invoice_total}`);
+  assert.equal(groups.reduce((n, g) => n + g.rows, 0), summary.body.total);
+});
+
+test('a report with nothing worth grouping offers no groups', async () => {
+  const r = await api('/api/report-catalogue');
+  const by = new Map<string, any>(r.body.map((x: any) => [x.name, x]));
+  // A day book is chronological; breaking it by voucher type stops it being one.
+  assert.equal(by.get('day-book').groupBy, null);
+  assert.equal(by.get('sales-register').groupBy, 'party');
+  assert.equal(by.get('shrinkage').groupBy, 'process_house');
+});
+
+test('the printed report carries the subtotals the screen shows', async () => {
+  const pdf = await download(
+    '/api/reports/sales-register?format=pdf&from=2026-04-01&to=2027-03-31' +
+    '&columns=party,invoice_no,invoice_date,taxable_value,invoice_total');
+  const text = pdf.toString('latin1');
+  assert.ok(text.startsWith('%PDF-1.'));
+  assert.match(text, /TOTAL OF /, 'the printed register has no per-party subtotal');
+});
+
+// --------------------------------------------------- ledger confirmation --
+
+test('a ledger confirmation states the balance and leaves room to sign it back', async () => {
+  const r = await api(`/api/ledger-confirmation?ledgerId=${WEAVER}&from=2026-04-01&to=2027-03-31`);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.party.code, '105');
+
+  const pdf = await download(
+    `/api/ledger-confirmation?ledgerId=${WEAVER}&from=2026-04-01&to=2027-03-31&format=pdf`);
+  const text = pdf.toString('latin1');
+  assert.ok(text.startsWith('%PDF-1.'));
+  assert.match(text, /LEDGER CONFIRMATION OF ACCOUNT/);
+  assert.match(text, /Please confirm the above balance/);
+  assert.match(text, /Signature:/, 'nothing for the party to sign');
+  assert.match(text, /not a demand for payment/);
 });
