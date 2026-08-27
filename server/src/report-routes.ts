@@ -127,10 +127,21 @@ export function operationalReportRouter() {
         .reduce((n, r) => n + Number(r.amount), 0));
       const otherDirect = round2(total('trading_expense') - cogs);
 
-      const grossProfit = round2(sales + closing - opening - purchases - otherDirect);
-      // What left stock other than by sale — write-offs, shortage. Classified
-      // indirect, so the perpetual figure excludes it and this one does not.
+      /**
+       * Everything that left stock other than by sale: goods returned to a
+       * weaver, written off, or short on a count.
+       *
+       * It is credited back at cost, and that is not presentation. Closing
+       * stock is already net of it, so leaving it inside cost of goods sold
+       * charges gross profit — and the write-off is charged *again* below the
+       * line as an indirect expense. One loss, counted twice. Crediting it
+       * here takes it out of cost of goods sold and leaves the P&L to charge
+       * it once, which is also where a returned lot belongs: against the
+       * weaver's account, not against margin.
+       */
       const stockAdjustments = round2(consumed - cogs);
+      const grossProfit =
+        round2(sales + closing + stockAdjustments - opening - purchases - otherDirect);
       const perpetual = round2(sales - cogs - otherDirect);
 
       const debit = [
@@ -143,6 +154,11 @@ export function operationalReportRouter() {
       ];
       const credit = [
         ...viewOf(of('trading_income'), q.view),
+        ...(Math.abs(stockAdjustments) > 0.005
+          ? [{ section: 'stock_adjustments', code: '',
+               name: 'Returns and stock written off, at cost',
+               control_account: 'Stock', amount: stockAdjustments }]
+          : []),
         { section: 'closing_stock', code: '', name: 'Closing Stock',
           control_account: 'Stock', amount: closing }
       ];
@@ -164,11 +180,11 @@ export function operationalReportRouter() {
           grossProfit,
           grossProfitPct: sales > 0 ? round2((grossProfit * 100) / sales) : 0,
           debitTotal: round2(opening + purchases + otherDirect + grossProfit),
-          creditTotal: round2(sales + closing),
-          /** Goods that left stock other than by sale. */
+          creditTotal: round2(sales + closing + stockAdjustments),
+          /** Goods that left stock other than by sale, credited back at cost. */
           stockAdjustments,
           /** Zero on sound books: the two ways of reaching gross profit agree. */
-          difference: round2(grossProfit - (perpetual - stockAdjustments))
+          difference: round2(grossProfit - perpetual)
         }
       });
     } catch (e) { next(e); }

@@ -84,6 +84,14 @@ export const REPORTS: Record<string, ReportSpec> = {
     groupBy: 'process_house',
     numeric: ['pcs', 'qty', 'weight_kg']
   }),
+  'order-lines': spec('v_order_line_spec', 'Order Lines With Specification', {
+    date: 'order_date',
+    search: ['order_no', 'party_ref', 'party', 'quality', 'design', 'construction',
+             'selvedge_line', 'grade_code', 'side'],
+    order: 'party, order_date, order_no, sno',
+    groupBy: 'party',
+    numeric: ['pcs', 'qty', 'amount', 'done_qty', 'balance_qty', 'less_value']
+  }),
   'po-pending': spec('v_po_pending', 'Purchase Order Pending', {
     date: 'order_date',
     search: ['order_no', 'party', 'quality', 'design'],

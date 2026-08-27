@@ -137,3 +137,76 @@ describe('DashboardView', () => {
     expect(onOpen).toHaveBeenCalledWith('grey_inward');
   });
 });
+
+describe('the Trading Account', () => {
+  const trading = {
+    from: '2026-04-01', to: '2027-03-31',
+    debit: [
+      { section: 'opening_stock', code: '', name: 'Opening Stock', control_account: 'Stock', amount: 100000 },
+      { section: 'purchases', code: '', name: 'Purchases and Processing', control_account: 'Stock', amount: 500000 }
+    ],
+    credit: [
+      { section: 'trading_income', code: '901', name: 'Trading Sales A/c', control_account: 'Trading Sales', amount: 800000 },
+      { section: 'closing_stock', code: '', name: 'Closing Stock', control_account: 'Stock', amount: 50000 }
+    ],
+    totals: {
+      openingStock: 100000, purchases: 500000, closingStock: 50000,
+      sales: 800000, costOfGoodsSold: 550000, otherDirectExpenses: 0,
+      grossProfit: 250000, grossProfitPct: 31.25,
+      debitTotal: 850000, creditTotal: 850000,
+      stockAdjustments: 0, difference: 0
+    }
+  };
+
+  function mockTrading(over: Record<string, unknown> = {}) {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, headers: new Headers(),
+      text: async () => JSON.stringify({ ...trading, ...over })
+    } as unknown as Response)));
+  }
+
+  test('shows both sides and the gross profit that balances them', async () => {
+    mockTrading();
+    render(<StatementView kind="trading" />);
+
+    expect(await screen.findByText(/Gross Profit c\/d/)).toBeInTheDocument();
+    expect(screen.getByText(/31.25% of sales/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Purchases and Processing/).length).toBeGreaterThan(0);
+  });
+
+  test('a gross loss is named as one, not shown as a negative profit', async () => {
+    mockTrading({ totals: { ...trading.totals, grossProfit: -40000, grossProfitPct: -5 } });
+    render(<StatementView kind="trading" />);
+    expect(await screen.findByText(/Gross Loss c\/d/)).toBeInTheDocument();
+  });
+
+  /**
+   * The two routes to gross profit must agree. When they do not, the reader
+   * has to be told the books need attention rather than shown a tidy total.
+   */
+  test('a disagreement between the two routes is surfaced, not hidden', async () => {
+    mockTrading({ totals: { ...trading.totals, difference: 1234.5 } });
+    render(<StatementView kind="trading" />);
+    expect(await screen.findByText(/the books need attention/)).toBeInTheDocument();
+  });
+
+  test('goods that left stock other than by sale are called out', async () => {
+    mockTrading({ totals: { ...trading.totals, stockAdjustments: -8000 } });
+    render(<StatementView kind="trading" />);
+    expect(await screen.findByText(/other than by\s+sale/)).toBeInTheDocument();
+  });
+
+  test('a statement can be read in details or in summary', async () => {
+    const asked: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      asked.push(String(url));
+      return { ok: true, status: 200, headers: new Headers(),
+               text: async () => JSON.stringify(trading) } as unknown as Response;
+    }));
+    render(<StatementView kind="trading" />);
+    await screen.findByText(/Gross Profit c\/d/);
+
+    fireEvent.change(screen.getByLabelText('View'), { target: { value: 'summary' } });
+    await waitFor(() => expect(asked.some(u => u.includes('view=summary'))).toBe(true));
+  });
+});

@@ -31,6 +31,7 @@ import { OfflineQueueView } from './modules/OfflineQueueView';
 import { PartyAliasView } from './modules/PartyAliasView';
 import { LedgerView } from './modules/LedgerView';
 import { LotReceiptView } from './modules/LotReceiptView';
+import { ContraEntryView } from './modules/ContraEntryView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { OfflineBadge } from './components/OfflineBadge';
 import { PasswordView } from './modules/PasswordView';
@@ -161,6 +162,8 @@ export const App: React.FC = () => {
       {module === 'go_live_readiness' && <CommercialFoundationView session={session} />}
       {module === 'platform_studio' && <PlatformStudioView />}
       {module.startsWith('edition_') && <EditionWorkspaceView edition={module.replace('edition_','') as 'weaving'|'dyeing'|'exports'|'logistics'|'garments'} session={session} />}
+      {module === 'trading' && <StatementView kind="trading" />}
+      {module === 'contra' && <ContraEntryView />}
       {module === 'profit_loss' && <StatementView kind="profit_loss" />}
       {module === 'balance_sheet' && <StatementView kind="balance_sheet" />}
       {module === 'delivery_challans' && <DeliveryChallanView />}

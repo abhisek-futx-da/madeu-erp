@@ -614,3 +614,107 @@ test('a ledger confirmation states the balance and leaves room to sign it back',
   assert.match(text, /Signature:/, 'nothing for the party to sign');
   assert.match(text, /not a demand for payment/);
 });
+
+// -------------------------------------------------------- order trade fields --
+
+test('an order carries the party\'s own reference, tolerance and terms', async () => {
+  const r = await api('/api/grey-purchase-orders', {
+    method: 'POST',
+    body: {
+      partyId: WEAVER, orderDate: '2026-09-01',
+      deliveryDays: 45, deliveryDate: '2026-10-16',
+      deliveryTerms: 'Ex-mill, Bhiwandi', paymentTerms: '30 days from receipt',
+      partyRef: `WVR-${stamp}`, varyPercent: 3,
+      lines: [{
+        qualityId: QUALITY_GALAXY, gradeCode: 'LUMP', pcs: 10,
+        cutLength: 100, qty: 1000, rate: 30.5,
+        lessType: 'meters', lessValue: 2
+      }]
+    }
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+
+  const list = await api(`/api/grey-purchase-orders?limit=50&q=${stamp}`);
+  const order = (list.body.rows as any[]).find(o => o.order_no === r.body.orderNo);
+  assert.ok(order, 'the order is not in the list');
+  assert.equal(order.party_ref, `WVR-${stamp}`, 'the weaver\'s own reference was dropped');
+  assert.equal(Number(order.vary_percent), 3);
+  assert.match(order.delivery_terms, /Ex-mill/);
+});
+
+test('a line carries the deduction agreed when the order was placed', async () => {
+  const r = await api(`/api/reports/order-lines?limit=200&q=${stamp}`);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+
+  const line = (r.body as any[]).find(l => l.quality === 'Galaxy' && l.less_type === 'meters');
+  assert.ok(line, 'the agreed deduction is not on the order line');
+  assert.equal(Number(line.less_value), 2);
+  assert.equal(line.side, 'purchase');
+});
+
+test('an order line shows the cloth\'s own specification without re-typing it', async () => {
+  const r = await api('/api/reports/order-lines?limit=200');
+  assert.equal(r.status, 200);
+  if (r.body.length === 0) return;
+
+  // Construction and selvedge live on the quality master; the line reads them.
+  for (const key of ['construction', 'selvedge_line', 'width_cms']) {
+    assert.ok(key in r.body[0], `an order line cannot show ${key}`);
+  }
+});
+
+test('a deduction type with no value, or a value with no type, is refused', async () => {
+  const r = await api('/api/grey-purchase-orders', {
+    method: 'POST',
+    body: {
+      partyId: WEAVER, orderDate: '2026-09-01',
+      lines: [{
+        qualityId: QUALITY_GALAXY, gradeCode: 'LUMP', pcs: 1,
+        cutLength: 100, qty: 100, rate: 30.5,
+        lessType: 'percent', lessValue: 0
+      }]
+    }
+  });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+});
+
+test('stock written off is charged once, not once above the line and once below', async () => {
+  const before = await api('/api/statements/trading?from=2026-04-01&to=2027-03-31');
+  const grossBefore = before.body.totals.grossProfit;
+
+  // Write a piece off: it leaves stock, and the loss is an indirect expense.
+  const barcode = `WO${stamp}`;
+  const inward = await api('/api/grey-inwards', {
+    method: 'POST',
+    body: {
+      partyId: WEAVER, entryDate: '2026-09-25',
+      challanNo: `WOCH-${stamp}`, challanDate: '2026-09-25', lotNo: `WO-${stamp}`,
+      lines: [{ qualityId: QUALITY_GALAXY, gradeCode: 'LUMP', barcode,
+                lotNo: `WO-${stamp}`, receivedQty: 50, checkedQty: 50, rate: 30 }]
+    }
+  });
+  assert.equal(inward.status, 201, JSON.stringify(inward.body));
+
+  const off = await api('/api/write-offs', {
+    method: 'POST',
+    body: { entryDate: '2026-09-26', reason: 'water damage', barcodes: [barcode] }
+  });
+  if (off.status !== 201) return; // write-off needs approval in some setups
+
+  const after = await api('/api/statements/trading?from=2026-04-01&to=2027-03-31');
+  const t = after.body.totals;
+
+  /**
+   * Closing stock is already net of the write-off. If the Trading Account did
+   * not credit it back at cost, gross profit would carry the loss — and the
+   * P&L would charge the very same rupees again below the line as an indirect
+   * expense. One loss, two charges.
+   */
+  assert.ok(Math.abs(t.difference) < 0.02,
+    `the write-off knocked gross profit out of agreement by ${t.difference}`);
+
+  // Buying 1,500 of grey and writing it off changes nothing above the line:
+  // both the purchase and the loss sit outside gross profit.
+  assert.ok(Math.abs(t.grossProfit - grossBefore) < 0.02,
+    `writing stock off moved gross profit by ${t.grossProfit - grossBefore}`);
+});

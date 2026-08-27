@@ -60,7 +60,13 @@ export function documentRouter() {
         transportId: uuid.nullish(),
         deliveryDays: z.coerce.number().int().min(0).default(0),
         deliveryDate: isoDate.nullish(),
+        deliveryTerms: z.string().max(200).default(''),
         paymentTerms: z.string().max(200).default(''),
+        // The weaver's own order number: he rings up about his reference, not ours.
+        partyRef: z.string().max(50).default(''),
+        // Tolerance on the delivered quantity, agreed when the order is placed.
+        varyPercent: z.coerce.number().min(0).max(100).default(0),
+        shipToAddressId: uuid.nullish(),
         remarks: z.string().max(500).default(''),
         lines: z.array(z.object({
           qualityId: uuid,
@@ -69,7 +75,9 @@ export function documentRouter() {
           pcs: z.coerce.number().int().positive(),
           cutLength: qty,
           qty: qty.refine(n => n > 0, 'qty must be positive'),
-          rate: money.nonnegative().optional()
+          rate: money.nonnegative().optional(),
+          lessType: z.enum(['none', 'pcs', 'meters', 'percent']).default('none'),
+          lessValue: z.coerce.number().min(0).max(1e7).default(0)
         })).min(1).max(MAX_DOC_LINES)
       }).parse(req.body);
 
@@ -87,21 +95,25 @@ export function documentRouter() {
         const orderNo = await nextDocNumber(ctx.db, ctx.tenantId, 'grey_po', ctx.fy);
         const order = await one<{ id: string }>(ctx.db,
           `insert into grey_purchase_order (tenant_id, order_no, order_date, party_id, ship_to_id,
-             broker_id, transport_id, delivery_days, delivery_date, payment_terms, remarks,
-             status, created_by)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'approved',$12) returning id`,
+             broker_id, transport_id, delivery_days, delivery_date, delivery_terms, payment_terms,
+             party_ref, vary_percent, ship_to_address_id, remarks, status, created_by)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'approved',$16) returning id`,
           [ctx.tenantId, orderNo, body.orderDate, body.partyId, body.shipToId ?? null,
            body.brokerId ?? null, body.transportId ?? null, body.deliveryDays,
-           body.deliveryDate ?? null, body.paymentTerms, body.remarks, ctx.userId]);
+           body.deliveryDate ?? null, body.deliveryTerms, body.paymentTerms,
+           body.partyRef, body.varyPercent, body.shipToAddressId ?? null,
+           body.remarks, ctx.userId]);
         if (!order) throw new Error('order insert returned nothing');
 
         await ctx.db.query(
           `insert into grey_purchase_order_line (tenant_id, order_id, sno, quality_id, design_id,
-             grade_code, pcs, cut_length, qty, rate)
-           select $1, $2, x.sno, x.quality_id, x.design_id, x.grade_code, x.pcs, x.cut_length, x.qty, x.rate
+             grade_code, pcs, cut_length, qty, rate, less_type, less_value)
+           select $1, $2, x.sno, x.quality_id, x.design_id, x.grade_code, x.pcs, x.cut_length,
+                  x.qty, x.rate, x.less_type::less_type, x.less_value
              from unnest($3::smallint[], $4::uuid[], $5::uuid[], $6::text[], $7::int[],
-                         $8::numeric[], $9::numeric[], $10::numeric[])
-                  as x(sno, quality_id, design_id, grade_code, pcs, cut_length, qty, rate)`,
+                         $8::numeric[], $9::numeric[], $10::numeric[], $11::text[], $12::numeric[])
+                  as x(sno, quality_id, design_id, grade_code, pcs, cut_length, qty, rate,
+                       less_type, less_value)`,
           [ctx.tenantId, order.id,
            resolvedLines.map((_, i) => i + 1),
            resolvedLines.map(l => l.qualityId),
@@ -110,7 +122,9 @@ export function documentRouter() {
            resolvedLines.map(l => l.pcs),
            resolvedLines.map(l => l.cutLength),
            resolvedLines.map(l => l.qty),
-           resolvedLines.map(l => l.rate)]);
+           resolvedLines.map(l => l.rate),
+           resolvedLines.map(l => l.lessType),
+           resolvedLines.map(l => l.lessValue)]);
 
         return { id: order.id, orderNo };
       });
@@ -151,14 +165,17 @@ export function documentRouter() {
              left join ledger_account b on b.id = o.broker_id
              left join ledger_account tr on tr.id = o.transport_id`,
     select: `o.id, o.order_no, o.order_date, o.status, o.delivery_date,
-             o.delivery_days, o.payment_terms, o.remarks,
+             o.delivery_days, o.delivery_terms, o.payment_terms, o.party_ref,
+             o.vary_percent, o.remarks,
              l.name as party_name, l.gstin as party_gstin,
              b.name as broker_name, tr.name as transport_name`,
-    search: ['o.order_no', 'l.name', 'o.remarks'],
+    search: ['o.order_no', 'l.name', 'o.remarks', 'o.party_ref'],
     dateColumn: 'o.order_date',
     orderBy: 'o.order_date desc, o.order_no desc'
-  }, `select ol.id, ol.order_id, ol.sno, ol.pcs, ol.qty, ol.rate, ol.amount, ol.received_qty,
-             q.name as quality, d.name as design, ol.grade_code
+  }, `select ol.id, ol.order_id, ol.sno, ol.pcs, ol.cut_length, ol.qty, ol.rate, ol.amount,
+             ol.received_qty, ol.less_type::text as less_type, ol.less_value,
+             q.name as quality, d.name as design, ol.grade_code,
+             q.construction, q.selvedge_line
         from grey_purchase_order_line ol
         join quality q on q.id = ol.quality_id
         left join design d on d.id = ol.design_id
