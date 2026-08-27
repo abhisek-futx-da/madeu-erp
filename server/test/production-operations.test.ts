@@ -124,6 +124,61 @@ test('cancelling the latest transfer walks the piece back through the same movem
   assert.equal(history.body.at(-1).to_location,'Main office / godown');
 });
 
+/** A converter switching systems always has lots at the dyer. Marking a piece
+ * issued_to_dyeing is not enough on its own: a receipt finds its pieces through
+ * dyeing_issue_line, so without an issue document behind it the cloth could
+ * never be received back and would be stranded. */
+test('opening stock brings in cloth out at a process house, and it comes back',async()=>{
+  let houseId='';
+  const setup=directDb();await setup.connect();
+  try{
+    const control=await setup.query<{id:string}>(
+      `select id from control_account where tenant_id=$1 and nature='sundry_creditor_process' limit 1`,[tenantId]);
+    assert.ok(control.rows[0],'a process-house control account must exist');
+    const house=await setup.query<{id:string}>(
+      `insert into ledger_account (tenant_id,code,name,control_account_id,gstin)
+       values ($1,'PH-1','Migration Process House',$2,'27PHOUS1234P1Z5') returning id`,
+      [tenantId,control.rows[0].id]);
+    houseId=house.rows[0]!.id;
+  }finally{await setup.end();}
+
+  const barcode=`WIP-${stamp}`;
+  const opened=await api('/opening-stock',{method:'POST',body:{fyLabel:'2026-27',stockDate:'2026-04-01',
+    locationId:mainId,remarks:'lot already at the dyer',
+    lines:[{barcode,qualityId,gradeCode:'A',lotNo:'LEGACY-88',stockKind:'at_process',qty:110,
+      greyValue:27500,processHouseId:houseId,issueChallanNo:'THEIR/771',
+      issueChallanDate:'2026-03-18',jobRate:22}]}});
+  assert.equal(opened.status,201,JSON.stringify(opened.body));
+
+  const check=directDb();await check.connect();
+  try{
+    const piece=await check.query<{status:string;held:string|null}>(
+      `select status::text,held_by_ledger_id as held from piece where tenant_id=$1 and barcode=$2`,
+      [tenantId,barcode]);
+    assert.equal(piece.rows[0]?.status,'issued_to_dyeing');
+    assert.equal(piece.rows[0]?.held,houseId,'the process house must be holding it');
+    const issue=await check.query<{n:string}>(
+      `select count(*)::text as n from dyeing_issue_line dil
+         join dyeing_issue di on di.id=dil.issue_id
+         join piece p on p.id=dil.piece_id
+        where p.barcode=$1 and di.is_opening and dil.job_rate=22`,[barcode]);
+    assert.equal(issue.rows[0]?.n,'1','migrated work in progress needs an opening issue behind it');
+  }finally{await check.end();}
+
+  const received=await api('/dyeing-receipts',{method:'POST',body:{entryDate:'2026-05-10',
+    processHouseId:houseId,challanNo:'THEIR/OUT/442',challanDate:'2026-05-10',
+    lines:[{barcode,receivedQty:108,finishGrade:'A',jobRate:22}]}});
+  assert.equal(received.status,201,JSON.stringify(received.body));
+  assert.equal(received.body.jobwork,2376,'job work accrues on migrated cloth like any other');
+});
+
+test('opening stock refuses cloth at a process house without one named',async()=>{
+  const orphan=await api('/opening-stock',{method:'POST',body:{fyLabel:'2026-27',stockDate:'2026-04-01',
+    locationId:mainId,lines:[{barcode:`ORPHAN-${stamp}`,qualityId,gradeCode:'A',
+      stockKind:'at_process',qty:10,greyValue:100}]}});
+  assert.equal(orphan.status,400,JSON.stringify(orphan.body));
+});
+
 test('opening stock locks after the first live accounting voucher',async()=>{
   const db=directDb();await db.connect();
   try{
