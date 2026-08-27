@@ -135,7 +135,7 @@ export const REPORTS: Record<string, ReportSpec> = {
     numeric: ['debit', 'credit']
   }),
   'trial-balance': spec('v_trial_balance', 'Trial Balance', {
-    search: ['code', 'name', 'control_account', 'sub_control'], order: 'code',
+    search: ['code', 'name', 'control_account'], order: 'code',
     numeric: ['total_debit', 'total_credit']
     // balance nets to zero across the whole report and says nothing in a footer.
   }),

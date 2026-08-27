@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { useApi } from '../lib/useApi';
 import { api, STATUS_LABEL } from '../lib/api';
-import { Columns3, Download, FileText, Save, Trash2, RefreshCw } from 'lucide-react';
+import { Columns3, Download, FileText, Printer, Save, Trash2, RefreshCw } from 'lucide-react';
 
 /**
  * One view over every report the API exposes. They differ only in endpoint
@@ -385,55 +385,186 @@ export const REPORTS: Record<string, ReportSpec> = {
       { key: 'name', label: 'Party' },
       { key: 'balance', label: 'Balance', align: 'right', format: money }
     ]
+  },
+  sales_register: {
+    title: 'Sales Register — every bill raised, in date order',
+    path: '/reports/sales-register',
+    columns: [
+      { key: 'invoice_date', label: 'Date' },
+      { key: 'invoice_no', label: 'Invoice' },
+      { key: 'party', label: 'Customer' },
+      { key: 'party_gstin', label: 'GSTIN' },
+      { key: 'place_of_supply', label: 'POS' },
+      { key: 'taxable_value', label: 'Taxable', align: 'right', format: money },
+      { key: 'tax_amount', label: 'GST', align: 'right', format: money },
+      { key: 'round_off', label: 'Round Off', align: 'right', format: money },
+      { key: 'invoice_total', label: 'Bill Total', align: 'right', format: money },
+      { key: 'irn', label: 'IRN' },
+      { key: 'status', label: 'Status', format: status }
+    ]
+  },
+  purchase_register: {
+    title: 'Purchase Register — every supplier bill, in date order',
+    path: '/reports/purchase-register',
+    columns: [
+      { key: 'invoice_date', label: 'Date' },
+      { key: 'supplier_invoice_no', label: 'Their Invoice' },
+      { key: 'our_ref', label: 'Our Ref' },
+      { key: 'party', label: 'Supplier' },
+      { key: 'party_gstin', label: 'GSTIN' },
+      { key: 'taxable_value', label: 'Taxable', align: 'right', format: money },
+      { key: 'tax_amount', label: 'GST', align: 'right', format: money },
+      { key: 'invoice_total', label: 'Bill Total', align: 'right', format: money },
+      { key: 'itc_eligible', label: 'ITC' },
+      { key: 'status', label: 'Status', format: status }
+    ]
+  },
+  day_book: {
+    title: 'Day Book — every posted entry, both legs',
+    path: '/reports/day-book',
+    columns: [
+      { key: 'voucher_date', label: 'Date' },
+      { key: 'voucher_type', label: 'Type' },
+      { key: 'voucher_no', label: 'Voucher' },
+      { key: 'ledger_code', label: 'Code' },
+      { key: 'ledger', label: 'Ledger' },
+      { key: 'control_account', label: 'Group' },
+      { key: 'debit', label: 'Debit', align: 'right', format: money },
+      { key: 'credit', label: 'Credit', align: 'right', format: money },
+      { key: 'narration', label: 'Narration' }
+    ]
+  },
+  trial_balance_grouped: {
+    title: 'Trial Balance By Group — the same figures by head',
+    path: '/reports/trial-balance-grouped',
+    columns: [
+      { key: 'nature', label: 'Nature' },
+      { key: 'sub_control', label: 'Sub Head' },
+      { key: 'control_account', label: 'Group' },
+      { key: 'ledgers', label: 'Ledgers', align: 'right' },
+      { key: 'total_debit', label: 'Debit', align: 'right', format: money },
+      { key: 'total_credit', label: 'Credit', align: 'right', format: money },
+      { key: 'balance', label: 'Balance', align: 'right', format: money }
+    ]
   }
 };
+
+interface Catalogue { name: string; hasPeriod: boolean; totals: string[] }
+interface Summary { total: number; totals: Record<string, number> }
+
+const PAGE = 200;
 
 export const LiveReportView: React.FC<{
   report: keyof typeof REPORTS;
   onOpen?: (moduleKey: string) => void;
 }> = ({ report, onOpen }) => {
   const spec = REPORTS[report]!;
+  /** The API's own name for this report, which the catalogue is keyed on. */
+  const reportName = spec.path.replace('/reports/', '');
   const [filter, setFilter] = useState('');
+  const [applied, setApplied] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [offset, setOffset] = useState(0);
   const [visible,setVisible]=useState<string[]>(()=>spec.columns.map(column=>column.key));
   const [viewName,setViewName]=useState('');
   const [selectedView,setSelectedView]=useState('');
   const [message,setMessage]=useState('');
-  const { data, error, loading, reload } = useApi<any[]>(spec.path);
+  const catalogue = useApi<Catalogue[]>('/report-catalogue');
+  const period = (catalogue.data ?? []).find(entry => entry.name === reportName)?.hasPeriod ?? false;
+
+  /**
+   * The search is a server query, not a pass over what is already on screen:
+   * the old box filtered the fetched page and answered confidently from a
+   * fraction of the report. Debounced, so typing is one query, not one each.
+   */
+  useEffect(() => {
+    const timer = setTimeout(() => { setApplied(filter.trim()); setOffset(0); }, 300);
+    return () => clearTimeout(timer);
+  }, [filter]);
+
+  const scope = useMemo(() => {
+    const p = new URLSearchParams();
+    if (applied) p.set('q', applied);
+    if (period && from) p.set('from', from);
+    if (period && to) p.set('to', to);
+    const text = p.toString();
+    return text ? `${text}&` : '';
+  }, [applied, period, from, to]);
+
+  const { data, error, loading, reload } =
+    useApi<any[]>(`${spec.path}?${scope}limit=${PAGE}&offset=${offset}`);
+  const summary = useApi<Summary>(`${spec.path}/summary?${scope}`);
   const saved=useApi<SavedView[]>(`/saved-views?module=${encodeURIComponent(`report:${report}`)}`);
 
-  useEffect(()=>{setFilter('');setVisible(spec.columns.map(column=>column.key));setSelectedView('');setViewName('');setMessage('');},[report,spec]);
+  useEffect(()=>{setFilter('');setApplied('');setFrom('');setTo('');setOffset(0);setVisible(spec.columns.map(column=>column.key));setSelectedView('');setViewName('');setMessage('');},[report,spec]);
 
-  const rows = (data ?? []).filter(r =>
-    !filter || Object.values(r).some(v => String(v ?? '').toLowerCase().includes(filter.toLowerCase()))
-  );
+  const rows = data ?? [];
+  const total = summary.data?.total ?? rows.length;
+  const totals = summary.data?.totals ?? {};
   const next = emptyStep(report);
   const columns=useMemo(()=>spec.columns.filter(column=>visible.includes(column.key)),[spec.columns,visible]);
   const applyView=(id:string)=>{setSelectedView(id);const view=(saved.data??[]).find(row=>row.id===id);if(!view)return;setFilter(view.filter_text);const allowed=view.columns.filter(key=>spec.columns.some(column=>column.key===key));setVisible(allowed.length?allowed:spec.columns.map(column=>column.key));setViewName(view.name);setMessage(`Loaded ${view.name}`);};
   const saveView=async()=>{const name=viewName.trim();if(!name||columns.length===0)return;await api.post('/saved-views',{module:`report:${report}`,name,filterText:filter,columns:columns.map(column=>column.key)});saved.reload();setMessage(`Saved ${name} for your account`);};
   const deleteView=async()=>{if(!selectedView)return;await api.del(`/saved-views/${selectedView}`);saved.reload();setSelectedView('');setViewName('');setMessage('Saved report deleted');};
-  const exportVisible=()=>{const quote=(value:unknown)=>{const text=String(value??'');return /[",\r\n]/.test(text)?`"${text.replaceAll('"','""')}"`:text;};const csv='\uFEFF'+[columns.map(column=>quote(column.label)).join(','),...rows.map(row=>columns.map(column=>quote(row[column.key])).join(','))].join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const anchor=document.createElement('a');anchor.href=url;anchor.download=`${report}-${new Date().toISOString().slice(0,10)}.csv`;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url);};
+
+  /** The file is the whole report under these filters, not the page on screen. */
+  const take = async (format: 'csv' | 'pdf') => {
+    setMessage(`Preparing the ${format.toUpperCase()}…`);
+    try {
+      await api.download(
+        `${spec.path}?${scope}format=${format}` +
+        `&columns=${encodeURIComponent(columns.map(column => column.key).join(','))}`, reportName);
+      setMessage(`${format.toUpperCase()} downloaded — ${total} row${total === 1 ? '' : 's'}`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'the export failed');
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#ecf1f7] text-slate-800 text-xs">
-      <ToolbarRibbon title={spec.title} onPrint={() => window.print()} onExport={exportVisible} />
+      <ToolbarRibbon title={spec.title}
+        onPrint={() => void take('pdf')} onExport={() => void take('csv')} />
 
-      <div className="px-3 py-2 flex items-center gap-2 bg-white border-b border-slate-200">
+      <div className="px-3 py-2 flex flex-wrap items-center gap-2 bg-white border-b border-slate-200">
         <FileText className="w-4 h-4 text-blue-700" />
         <input
-          value={filter} onChange={e => setFilter(e.target.value)}
-          placeholder="Filter any column…" className="erp-input w-72"
+          value={filter} onChange={e => setFilter(e.target.value)} aria-label="Search this report"
+          placeholder="Search the whole report…" className="erp-input w-60 min-h-11"
         />
-        <button onClick={reload} className="erp-btn" title="Reload from server">
+        {period ? (
+          <>
+            <label htmlFor="report-from">From</label>
+            <input id="report-from" type="date" aria-label="From date"
+              className="erp-input min-h-11"
+              value={from} onChange={e => { setFrom(e.target.value); setOffset(0); }} />
+            <label htmlFor="report-to">To</label>
+            <input id="report-to" type="date" aria-label="To date"
+              className="erp-input min-h-11"
+              value={to} onChange={e => { setTo(e.target.value); setOffset(0); }} />
+          </>
+        ) : (
+          <span className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-slate-600">
+            Position as on today — no date range applies
+          </span>
+        )}
+        <button onClick={reload} className="erp-btn min-h-11" title="Reload from server">
           <RefreshCw className="w-3.5 h-3.5 text-blue-600" />
           <span>Refresh</span>
         </button>
         <details className="relative"><summary className="erp-btn min-h-11 cursor-pointer list-none"><Columns3 className="h-4 w-4"/>Columns ({columns.length}/{spec.columns.length})</summary><div className="absolute left-0 z-20 mt-1 grid min-w-64 gap-1 rounded border bg-white p-3 shadow-xl">{spec.columns.map(column=><label key={column.key} className="flex min-h-9 items-center gap-2"><input type="checkbox" checked={visible.includes(column.key)} onChange={event=>setVisible(current=>event.target.checked?[...current,column.key]:current.length===1?current:current.filter(key=>key!==column.key))}/>{column.label}</label>)}</div></details>
         <span className="ml-auto font-semibold text-slate-600">
-          {loading ? 'Loading…' : `${rows.length} row${rows.length === 1 ? '' : 's'}`}
+          {loading ? 'Loading…' : total > rows.length
+            ? `${offset + 1}–${offset + rows.length} of ${total}`
+            : `${total} row${total === 1 ? '' : 's'}`}
         </span>
+        <button className="erp-btn min-h-11" disabled={offset === 0}
+          onClick={() => setOffset(current => Math.max(0, current - PAGE))}>Previous</button>
+        <button className="erp-btn min-h-11" disabled={offset + rows.length >= total}
+          onClick={() => setOffset(current => current + PAGE)}>Next</button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b bg-blue-50 px-3 py-2"><FileText className="h-4 w-4 text-blue-800"/><strong>My saved reports</strong><select aria-label="Saved report" className="erp-input min-h-11 min-w-48" value={selectedView} onChange={e=>applyView(e.target.value)}><option value="">Choose saved report</option>{(saved.data??[]).map(view=><option key={view.id} value={view.id}>{view.name}</option>)}</select><input aria-label="Saved report name" className="erp-input min-h-11 w-56" placeholder="Name this filter and layout" value={viewName} onChange={e=>setViewName(e.target.value)}/><button disabled={!viewName.trim()} className="erp-btn erp-btn-primary min-h-11" onClick={()=>void saveView()}><Save className="h-4 w-4"/>Save current</button><button disabled={!selectedView} className="erp-btn min-h-11" onClick={()=>void deleteView()}><Trash2 className="h-4 w-4 text-red-700"/>Delete</button><button className="erp-btn min-h-11" onClick={exportVisible}><Download className="h-4 w-4"/>Export visible columns</button>{message&&<span role="status" className="font-semibold text-emerald-800">{message}</span>}</div>
+      <div className="flex flex-wrap items-center gap-2 border-b bg-blue-50 px-3 py-2"><FileText className="h-4 w-4 text-blue-800"/><strong>My saved reports</strong><select aria-label="Saved report" className="erp-input min-h-11 min-w-48" value={selectedView} onChange={e=>applyView(e.target.value)}><option value="">Choose saved report</option>{(saved.data??[]).map(view=><option key={view.id} value={view.id}>{view.name}</option>)}</select><input aria-label="Saved report name" className="erp-input min-h-11 w-56" placeholder="Name this filter and layout" value={viewName} onChange={e=>setViewName(e.target.value)}/><button disabled={!viewName.trim()} className="erp-btn erp-btn-primary min-h-11" onClick={()=>void saveView()}><Save className="h-4 w-4"/>Save current</button><button disabled={!selectedView} className="erp-btn min-h-11" onClick={()=>void deleteView()}><Trash2 className="h-4 w-4 text-red-700"/>Delete</button><button className="erp-btn min-h-11" onClick={()=>void take('csv')}><Download className="h-4 w-4"/>Excel (CSV)</button><button className="erp-btn min-h-11" onClick={()=>void take('pdf')}><Printer className="h-4 w-4"/>Print PDF</button>{message&&<span role="status" className="font-semibold text-emerald-800">{message}</span>}</div>
 
       {error && (
         <div className="bg-red-600 text-white px-4 py-1.5 font-semibold">{error}</div>
@@ -473,6 +604,22 @@ export const LiveReportView: React.FC<{
               </tr>
             ))}
           </tbody>
+          {rows.length > 0 && Object.keys(totals).length > 0 && (
+            /* The footer totals the whole report under these filters. Adding up
+               the page on screen would state a total for one screenful. */
+            <tfoot className="sticky bottom-0 border-t-2 border-slate-400 bg-slate-100 font-bold">
+              <tr>
+                {columns.map((c, i) => (
+                  <td key={c.key}
+                      className={`px-2 py-1.5 ${c.align === 'right' ? 'text-right font-mono' : ''}`}>
+                    {i === 0
+                      ? `Total (${total} row${total === 1 ? '' : 's'})`
+                      : c.key in totals ? (c.format ?? num)(totals[c.key]) : ''}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </div>

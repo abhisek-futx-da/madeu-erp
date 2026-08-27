@@ -29,6 +29,7 @@ import { StockCountView } from './modules/StockCountView';
 import { ProcessHouseInboxView } from './modules/ProcessHouseInboxView';
 import { OfflineQueueView } from './modules/OfflineQueueView';
 import { PartyAliasView } from './modules/PartyAliasView';
+import { LedgerView } from './modules/LedgerView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { OfflineBadge } from './components/OfflineBadge';
 import { PasswordView } from './modules/PasswordView';
@@ -177,6 +178,7 @@ export const App: React.FC = () => {
       {module === 'process_houses' && <ProcessHouseInboxView session={session} />}
       {module === 'offline_queue' && <OfflineQueueView />}
       {module === 'party_aliases' && <PartyAliasView />}
+      {module === 'ledger' && <LedgerView />}
       {module === 'location_transfers' && <LocationTransferView session={session} />}
       {module === 'dispatch' && <ScanDocumentView kind="dispatch" />}
       {module === 'packing_lists' && <PackingListView />}

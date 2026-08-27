@@ -49,47 +49,27 @@ select vl.tenant_id, v.voucher_date, v.voucher_type::text as voucher_type,
   join control_account ca on ca.id = la.control_account_id
  where vl.tenant_id = current_setting('app.tenant_id', true)::uuid;
 
--- The trial balance gains its accounting head. create-or-replace may only
--- append, so the existing eight columns are restated exactly as they stand.
-create or replace view v_trial_balance as
-with fy as (
-  select tenant_id, label, starts_on, ends_on
-    from financial_year
-   where tenant_id = current_setting('app.tenant_id', true)::uuid
-     and status = 'open'
-   order by starts_on desc
-   limit 1
-), entries as (
-  select ob.tenant_id, ob.ledger_id, ob.debit, ob.credit
-    from opening_balance ob
-    join fy on fy.tenant_id = ob.tenant_id and fy.label = ob.fy_label
-  union all
-  select vl.tenant_id, vl.ledger_id, vl.debit, vl.credit
-    from voucher_line vl
-    join voucher v on v.id = vl.voucher_id and v.is_posted
-    join fy on fy.tenant_id = vl.tenant_id
-            and v.voucher_date between fy.starts_on and fy.ends_on
-)
-select e.tenant_id, la.code, la.name, ca.name as control_account, ca.nature,
-       sum(e.debit) as total_debit,
-       sum(e.credit) as total_credit,
-       sum(e.debit) - sum(e.credit) as balance,
-       ca.sub_control
-  from entries e
-  join ledger_account la on la.id = e.ledger_id
-  join control_account ca on ca.id = la.control_account_id
- group by e.tenant_id, la.code, la.name, ca.name, ca.nature, ca.sub_control;
-
--- The same numbers by head rather than by ledger, derived from the trial
--- balance itself so the two can never disagree.
+/**
+ * The same numbers by head rather than by ledger, read off the trial balance
+ * itself so the two can never disagree.
+ *
+ * v_trial_balance is left exactly as 042 defines it: a later migration that
+ * reshapes an earlier one's view breaks the upgrade replay, which can apply
+ * them out of order. The accounting head is reached by joining back on
+ * (tenant_id, code) — unique on ledger_account — rather than on the control
+ * account's name, which is not unique and would multiply rows into the totals.
+ */
 create or replace view v_trial_balance_grouped as
-select tenant_id, nature::text as nature, sub_control, control_account,
+select tb.tenant_id, ca.nature::text as nature, ca.sub_control,
+       ca.name              as control_account,
        count(*)::int        as ledgers,
-       sum(total_debit)     as total_debit,
-       sum(total_credit)    as total_credit,
-       sum(balance)         as balance
-  from v_trial_balance
- group by tenant_id, nature, sub_control, control_account;
+       sum(tb.total_debit)  as total_debit,
+       sum(tb.total_credit) as total_credit,
+       sum(tb.balance)      as balance
+  from v_trial_balance tb
+  join ledger_account la on la.tenant_id = tb.tenant_id and la.code = tb.code
+  join control_account ca on ca.id = la.control_account_id
+ group by tb.tenant_id, ca.nature, ca.sub_control, ca.name;
 
 /**
  * A ledger for a period, which a running balance over all time is not: the

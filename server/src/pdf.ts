@@ -203,9 +203,13 @@ const RIGHT_EDGE = 814;
  */
 function columnWidths(doc: ReportDoc): number[] {
   // reduce, not Math.max(...cells): an export runs to twenty thousand rows.
-  const width = doc.columns.map(c => doc.rows.reduce(
+  // The footer is measured too — a total is wider than any row that feeds it,
+  // and sizing on the rows alone printed a truncated, wrong-looking figure.
+  const width = doc.columns.map((c, i) => doc.rows.reduce(
     (widest, r) => Math.max(widest, String(r[c.key] ?? '').length),
-    Math.max(c.label.length, 4)
+    Math.max(c.label.length, 4,
+      i === 0 ? `TOTAL (${doc.totalRows} rows)`.length
+              : c.key in doc.totals ? money(doc.totals[c.key]!).length : 0)
   ));
   const budget = Math.floor((RIGHT_EDGE - LEFT) / 4.1);
   let used = width.reduce((n, w) => n + w + 1, 0);
@@ -250,12 +254,13 @@ function reportPages(doc: ReportDoc): PdfPage[] {
   y -= 4;
   if (Object.keys(doc.totals).length > 0) {
     add(row(doc.columns.map((c, i) =>
-      i === 0 ? 'TOTAL' : (c.key in doc.totals ? money(doc.totals[c.key]!) : ''))), 7.5, 12, true);
+      i === 0 ? `TOTAL (${doc.totalRows} rows)`
+              : (c.key in doc.totals ? money(doc.totals[c.key]!) : ''))), 7.5, 12, true);
   }
-  const shown = doc.rows.length === doc.totalRows
-    ? `${doc.totalRows} rows`
-    : `${doc.rows.length} of ${doc.totalRows} rows — narrow the filter to print the rest`;
-  add(shown, 7, 11, true);
+  if (doc.rows.length !== doc.totalRows) {
+    add(`${doc.rows.length} of ${doc.totalRows} rows printed — ` +
+        'narrow the filter to print the rest', 7, 11, true);
+  }
   add('System-generated from Link ERP. Figures are from posted documents only.', 6.5, 10);
   push();
   return pages;

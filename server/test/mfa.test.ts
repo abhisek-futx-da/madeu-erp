@@ -62,8 +62,16 @@ test('a current authenticator code enables MFA and cannot be replayed', async ()
   });
   assert.equal(bad.status, 400);
 
+  /**
+   * One code, used twice. Calling totpCode() again for the second attempt
+   * returns a *fresh* code whenever the thirty-second window happens to roll
+   * between the two requests — which legitimately opens a session and made
+   * this test fail at random rather than when replay protection broke.
+   */
+  const code = totpCode(secret);
+
   const enabled = await api('/api/auth/mfa/enable', {
-    method: 'POST', token: worker, body: { code: totpCode(secret) }
+    method: 'POST', token: worker, body: { code }
   });
   assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
 
@@ -76,7 +84,7 @@ test('a current authenticator code enables MFA and cannot be replayed', async ()
   assert.equal(needsMfa.body.mfaRequired, true);
 
   const replay = await api('/api/auth/login', {
-    method: 'POST', body: { email, password, mfaCode: totpCode(secret) }
+    method: 'POST', body: { email, password, mfaCode: code }
   });
   assert.equal(replay.status, 401, 'the code consumed at enable must not open another session');
 });
