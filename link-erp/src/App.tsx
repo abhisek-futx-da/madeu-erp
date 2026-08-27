@@ -52,6 +52,7 @@ import { auth, type Session } from './lib/api';
 import { clearApiCache } from './lib/useApi';
 import { LogOut } from 'lucide-react';
 import { LocationSwitcher } from './components/LocationSwitcher';
+import { LanguageSwitcher } from './components/LanguageSwitcher';
 
 export const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -213,8 +214,12 @@ export const App: React.FC = () => {
         <div className="flex-1 min-w-0">
           <ModuleNav activeModule={activeModule} onSelect={navigate} role={session.role} />
         </div>
-        <div className="bg-[#cbd5e1] border-b border-[#94a3b8] px-3 py-1 flex items-center justify-end gap-2 text-xs min-h-11">
+        {/* Wraps: on a phone this row carries offline, language, location,
+            role and sign-out, and without it the first control runs off the
+            left edge where a thumb cannot reach it. */}
+        <div className="bg-[#cbd5e1] border-b border-[#94a3b8] px-3 py-1 flex flex-wrap items-center justify-end gap-2 text-xs min-h-11">
           <OfflineBadge />
+          <LanguageSwitcher />
           <LocationSwitcher current={session.activeLocation ?? null} onChanged={activeLocation =>
             setSession(current => current ? { ...current,activeLocation } : current)} />
           <span className="bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded border border-emerald-300 font-mono font-bold">

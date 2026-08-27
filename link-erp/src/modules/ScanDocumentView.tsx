@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { useApi } from '../lib/useApi';
+import { useLang } from '../lib/i18n';
 import { api } from '../lib/api';
 import type { LedgerRow, Page, PieceRow } from '../lib/api';
 import { QrCode, AlertTriangle, CheckCircle2, Trash2, ListChecks, History } from 'lucide-react';
@@ -107,6 +108,9 @@ interface SalesOrderRow {
 
 export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
   const spec = SPECS[kind];
+  // The floor reads Hindi or Gujarati first. A missing key renders the
+  // English, so a half-translated screen still works.
+  const { t } = useLang();
   const [partyId, setPartyId] = useState('');
   const [invoiceId, setInvoiceId] = useState('');
   const [challanNo, setChallanNo] = useState('');
@@ -275,7 +279,7 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
   return (
     <div className="flex flex-col h-full bg-[#ecf1f7] text-slate-800 text-xs">
       <ToolbarRibbon
-        title={spec.title}
+        title={t(spec.title)}
         onSave={save}
         onNew={() => { setLines([]); setChallanNo(''); setReason(''); setNotice(null); }}
         onPrint={() => window.print()}
@@ -294,7 +298,7 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
         <div className="bg-white rounded border border-[#b8c9dd] p-3 grid grid-cols-1 md:grid-cols-12 gap-2.5">
           {spec.partyLabel && (
             <div className="md:col-span-5">
-              <label htmlFor="scan-party" className="erp-label block text-red-700 font-bold">* {spec.partyLabel}</label>
+              <label htmlFor="scan-party" className="erp-label block text-red-700 font-bold">* {t(spec.partyLabel)}</label>
               <select id="scan-party" value={partyId} onChange={e => {
                 setPartyId(e.target.value);
                 if (kind === 'dispatch') setLines(old => old.map(line => ({ ...line, soLineId: undefined })));
@@ -329,7 +333,7 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
             <div className={kind === 'write_off' ? 'md:col-span-8' : 'md:col-span-5'}>
               <label htmlFor="scan-reason" className="erp-label block text-red-700 font-bold">* Reason</label>
               <input id="scan-reason" value={reason} onChange={e => setReason(e.target.value)} maxLength={200}
-                     className="erp-input w-full" placeholder="e.g. defect, damage, wrong colour" />
+                     className="erp-input w-full" placeholder={t('e.g. defect, damage, wrong colour')} />
             </div>
           )}
 
@@ -362,7 +366,7 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
             </label>
             <input id="scan" autoFocus inputMode="text" autoComplete="off"
                    value={scan} onChange={e => setScan(e.target.value)}
-                   placeholder="scan or type, then Enter"
+                   placeholder={t('scan or type, then Enter')}
                    className="erp-input font-mono w-full text-base py-3 md:text-xs md:py-1" />
           </div>
           <button type="submit" className="erp-btn erp-btn-primary min-h-11 px-5 md:min-h-0">
@@ -384,10 +388,10 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
           <div className="bg-white rounded border border-[#b8c9dd] overflow-hidden">
             <div className="bg-slate-100 border-b border-slate-300 px-2 py-1.5
                             flex flex-wrap items-center gap-2">
-              <span className="font-bold">Pick from stock</span>
+              <span className="font-bold">{t('Pick from stock')}</span>
               <input value={pickFilter} onChange={e => setPickFilter(e.target.value)}
                      aria-label="Filter stock"
-                     placeholder="quality, lot, rack or barcode"
+                     placeholder={t('quality, lot, rack or barcode')}
                      className="erp-input font-mono flex-1 min-w-[10rem]" />
               <button onClick={() => {
                 const chosen = pickable.filter(p => !lines.some(l => l.barcode === p.barcode));
@@ -445,12 +449,12 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
             <thead className="bg-slate-100 border-b border-slate-300 text-left">
               <tr>
                 <th className="px-2 py-1.5 font-bold">Sno</th>
-                <th className="px-2 py-1.5 font-bold">Barcode</th>
-                <th className="px-2 py-1.5 font-bold">Quality</th>
+                <th className="px-2 py-1.5 font-bold">{t('Barcode')}</th>
+                <th className="px-2 py-1.5 font-bold">{t('Quality')}</th>
                 <th className="px-2 py-1.5 font-bold text-right">Qty</th>
                 {spec.needsRate && <>
                   <th className="px-2 py-1.5 font-bold text-right">Rate</th>
-                  <th className="px-2 py-1.5 font-bold text-right">Amount</th>
+                  <th className="px-2 py-1.5 font-bold text-right">{t('Amount')}</th>
                 </>}
                 {kind === 'dispatch' && <th className="px-2 py-1.5 font-bold w-20">Bale</th>}
                 {kind === 'dispatch' && <th className="px-2 py-1.5 font-bold">Sales order allocation</th>}
@@ -542,6 +546,7 @@ export const ScanDocumentView: React.FC<{ kind: Kind }> = ({ kind }) => {
  * find out why the piece in their hand is not where the paper says it is.
  */
 const FlowPanel: React.FC<{ barcode: string; onClose: () => void }> = ({ barcode, onClose }) => {
+  const { t } = useLang();
   const flow = useApi<{
     event: string; from_status: string | null; to_status: string;
     qty_before: number; qty_after: number; counterparty: string | null;
@@ -553,12 +558,12 @@ const FlowPanel: React.FC<{ barcode: string; onClose: () => void }> = ({ barcode
       <div className="bg-slate-100 border-b border-slate-300 px-2 py-1.5 flex items-center gap-2">
         <History className="w-3.5 h-3.5 text-blue-700" />
         <span className="font-bold">Journey of <span className="font-mono">{barcode}</span></span>
-        <button onClick={onClose} className="erp-btn py-0.5 ml-auto">Close</button>
+        <button onClick={onClose} className="erp-btn py-0.5 ml-auto">{t('Close')}</button>
       </div>
-      {flow.loading && <p className="px-2 py-3 text-slate-500">Loading…</p>}
+      {flow.loading && <p className="px-2 py-3 text-slate-500">{t('Loading…')}</p>}
       {flow.error && <p className="px-2 py-3 text-red-700">{flow.error}</p>}
       {!flow.loading && (flow.data ?? []).length === 0 && (
-        <p className="px-2 py-3 text-slate-500">Nothing has happened to this thaan yet.</p>
+        <p className="px-2 py-3 text-slate-500">{t('Nothing has happened to this thaan yet.')}</p>
       )}
       {(flow.data ?? []).length > 0 && (
         <div className="overflow-x-auto">
@@ -568,7 +573,7 @@ const FlowPanel: React.FC<{ barcode: string; onClose: () => void }> = ({ barcode
                 <th className="px-2 py-1">When</th><th className="px-2 py-1">What</th>
                 <th className="px-2 py-1">From → to</th>
                 <th className="px-2 py-1 text-right">Qty</th>
-                <th className="px-2 py-1">With</th><th className="px-2 py-1">Document</th>
+                <th className="px-2 py-1">With</th><th className="px-2 py-1">{t('Document')}</th>
               </tr>
             </thead>
             <tbody>

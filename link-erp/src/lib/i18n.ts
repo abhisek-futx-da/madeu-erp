@@ -79,7 +79,58 @@ const hi: Catalog = {
   Mill: 'मिल',
   'Loading…': 'लोड हो रहा है…',
   'This translation has not been checked by a native speaker yet.':
-    'इस अनुवाद की जाँच अभी किसी स्थानीय भाषी ने नहीं की है।'
+    'इस अनुवाद की जाँच अभी किसी स्थानीय भाषी ने नहीं की है।',
+  // --------------------------------------------------- the godown floor --
+  // The screens a storekeeper uses all day. Office and accounts screens stay
+  // in English on purpose: the people on them read English, and a
+  // half-translated trial balance helps nobody.
+  'Grey Inward (Barcoding)': 'ग्रे आवक (बारकोडिंग)',
+  'Issue To Dyeing (Job Order Challan)': 'डाइंग को इशू (जॉब ऑर्डर चालान)',
+  'Grey Return to Weaver': 'बुनकर को ग्रे वापस',
+  'Defective Return to Process House': 'प्रोसेस हाउस को खराब माल वापस',
+  'Customer Return': 'ग्राहक वापसी',
+  'Write-off / Damage': 'राइट-ऑफ / नुकसान',
+  'Dispatch / Delivery Challan': 'डिस्पैच / डिलीवरी चालान',
+  'Cut / Pack': 'कट / पैक',
+  'Receive From Dyeing': 'डाइंग से माल लें',
+  'Physical Stock Count': 'भौतिक स्टॉक गिनती',
+  Weaver: 'बुनकर',
+  'Process House': 'प्रोसेस हाउस',
+  Customer: 'ग्राहक',
+  Barcode: 'बारकोड',
+  Quality: 'क्वालिटी',
+  Quantity: 'मात्रा',
+  Amount: 'रकम',
+  Rate: 'भाव',
+  Lot: 'लॉट',
+  Rack: 'रैक',
+  Grade: 'ग्रेड',
+  Metres: 'मीटर',
+  Document: 'दस्तावेज़',
+  Reason: 'कारण',
+  'Pick from stock': 'स्टॉक से चुनें',
+  'scan or type, then Enter': 'स्कैन करें या लिखें, फिर Enter',
+  'quality, lot, rack or barcode': 'क्वालिटी, लॉट, रैक या बारकोड',
+  'e.g. defect, damage, wrong colour': 'जैसे खराबी, नुकसान, गलत रंग',
+  'Nothing has happened to this thaan yet.': 'इस थान के साथ अभी कुछ नहीं हुआ है।',
+  'Journey of ': 'इस थान का सफर: ',
+  'From → to': 'कहाँ से → कहाँ',
+  Save: 'सेव करें',
+  Print: 'प्रिंट',
+  Remove: 'हटाएँ',
+  Refresh: 'फिर लोड करें',
+  'Post lot receipt': 'लॉट रसीद पोस्ट करें',
+  'Add thaan': 'थान जोड़ें',
+  'New barcode': 'नया बारकोड',
+  'Against challan': 'किस चालान के सामने',
+  'Their challan no.': 'उनका चालान नंबर',
+  Shrinkage: 'श्रिंकेज',
+  Sent: 'भेजा',
+  Back: 'वापस आया',
+  'Job work': 'जॉब वर्क',
+  Offline: 'ऑफलाइन',
+  'Saved on this phone; it will go up when the signal returns.':
+    'इस फोन में सेव हुआ; सिग्नल आते ही भेज दिया जाएगा।'
 };
 
 const gu: Catalog = {
@@ -126,7 +177,58 @@ const gu: Catalog = {
   Mill: 'મિલ',
   'Loading…': 'લોડ થઈ રહ્યું છે…',
   'This translation has not been checked by a native speaker yet.':
-    'આ અનુવાદ હજી સુધી કોઈ સ્થાનિક ભાષીએ ચકાસ્યો નથી.'
+    'આ અનુવાદ હજી સુધી કોઈ સ્થાનિક ભાષીએ ચકાસ્યો નથી.',
+  // --------------------------------------------------- the godown floor --
+  // The screens a storekeeper uses all day. Office and accounts screens stay
+  // in English on purpose: the people on them read English, and a
+  // half-translated trial balance helps nobody.
+  'Grey Inward (Barcoding)': 'ગ્રે આવક (બારકોડિંગ)',
+  'Issue To Dyeing (Job Order Challan)': 'ડાઇંગ માટે ઇશ્યુ (જોબ ઓર્ડર ચલણ)',
+  'Grey Return to Weaver': 'વણકરને ગ્રે પરત',
+  'Defective Return to Process House': 'પ્રોસેસ હાઉસને ખરાબ માલ પરત',
+  'Customer Return': 'ગ્રાહક પરત',
+  'Write-off / Damage': 'રાઇટ-ઓફ / નુકસાન',
+  'Dispatch / Delivery Challan': 'ડિસ્પેચ / ડિલિવરી ચલણ',
+  'Cut / Pack': 'કટ / પેક',
+  'Receive From Dyeing': 'ડાઇંગમાંથી માલ લો',
+  'Physical Stock Count': 'ભૌતિક સ્ટોક ગણતરી',
+  Weaver: 'વણકર',
+  'Process House': 'પ્રોસેસ હાઉસ',
+  Customer: 'ગ્રાહક',
+  Barcode: 'બારકોડ',
+  Quality: 'ક્વોલિટી',
+  Quantity: 'જથ્થો',
+  Amount: 'રકમ',
+  Rate: 'ભાવ',
+  Lot: 'લોટ',
+  Rack: 'રેક',
+  Grade: 'ગ્રેડ',
+  Metres: 'મીટર',
+  Document: 'દસ્તાવેજ',
+  Reason: 'કારણ',
+  'Pick from stock': 'સ્ટોકમાંથી પસંદ કરો',
+  'scan or type, then Enter': 'સ્કેન કરો અથવા લખો, પછી Enter',
+  'quality, lot, rack or barcode': 'ક્વોલિટી, લોટ, રેક કે બારકોડ',
+  'e.g. defect, damage, wrong colour': 'દા.ત. ખામી, નુકસાન, ખોટો રંગ',
+  'Nothing has happened to this thaan yet.': 'આ થાન સાથે હજી કંઈ થયું નથી.',
+  'Journey of ': 'આ થાનની સફર: ',
+  'From → to': 'ક્યાંથી → ક્યાં',
+  Save: 'સાચવો',
+  Print: 'પ્રિન્ટ',
+  Remove: 'કાઢી નાખો',
+  Refresh: 'ફરી લોડ કરો',
+  'Post lot receipt': 'લોટ રસીદ પોસ્ટ કરો',
+  'Add thaan': 'થાન ઉમેરો',
+  'New barcode': 'નવો બારકોડ',
+  'Against challan': 'કયા ચલણ સામે',
+  'Their challan no.': 'તેમનો ચલણ નંબર',
+  Shrinkage: 'શ્રિન્કેજ',
+  Sent: 'મોકલ્યું',
+  Back: 'પરત આવ્યું',
+  'Job work': 'જોબ વર્ક',
+  Offline: 'ઓફલાઇન',
+  'Saved on this phone; it will go up when the signal returns.':
+    'આ ફોનમાં સાચવ્યું; સિગ્નલ આવતાં જ મોકલાશે.'
 };
 
 const CATALOGS: Record<Lang, Catalog> = { en: {}, hi, gu };
