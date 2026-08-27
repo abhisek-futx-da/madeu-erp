@@ -30,6 +30,7 @@ import { ProcessHouseInboxView } from './modules/ProcessHouseInboxView';
 import { OfflineQueueView } from './modules/OfflineQueueView';
 import { PartyAliasView } from './modules/PartyAliasView';
 import { LedgerView } from './modules/LedgerView';
+import { LotReceiptView } from './modules/LotReceiptView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { OfflineBadge } from './components/OfflineBadge';
 import { PasswordView } from './modules/PasswordView';
@@ -171,6 +172,7 @@ export const App: React.FC = () => {
       {module === 'customer_return' && <ScanDocumentView kind="customer_return" />}
       {module === 'write_off' && <ScanDocumentView kind="write_off" />}
       {module === 'dyeing_receipt' && <DyeingReceiptView />}
+      {module === 'lot_receipt' && <LotReceiptView />}
       {module === 'reprocess' && <ReprocessView />}
       {module === 'cut_pack' && <ScanDocumentView kind="pack" />}
       {module === 'regroup' && <PieceRegroupView session={session} />}

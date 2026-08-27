@@ -302,6 +302,18 @@ do $$ declare uid uuid; begin
   end;
 end $$;
 
+-- 21. goods at a process house may be returned in different units, but the
+-- mill still cannot cut them up itself. Invariant 11 proves the refusal; this
+-- proves the one legal way through, so the two are not confused.
+do $$ begin
+  insert into piece_movement
+    (tenant_id, piece_id, event, from_status, to_status, qty_before, qty_after, doc_type, doc_id)
+  values
+    ('eeeeeeee-1111-1111-1111-111111111111','55555555-0000-0000-0000-000000000001',
+     'process_return','issued_to_dyeing','consumed',118,0,'piece_regroup',gen_random_uuid());
+  raise notice 'PASS 21 a process house may return goods in different pieces';
+end $$;
+
 -- 10. tenant isolation actually filters
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'tenant_app') then

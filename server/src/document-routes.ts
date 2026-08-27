@@ -5,6 +5,7 @@ import { requireWrite } from './auth.ts';
 import {
   postDispatch, postDyeingIssue, postDyeingReceipt, postGreyInward, type Ctx
 } from './domain.ts';
+import { postLotReceipt } from './lot-receipt.ts';
 import { raiseInvoiceForDispatch } from './invoicing.ts';
 import { recordPurchaseInvoice, raiseNote } from './purchasing.ts';
 import { submitInvoiceToIrp } from './irp-service.ts';
@@ -372,6 +373,61 @@ export function documentRouter() {
       }).parse(req.body);
       const out = await withCtx(req, ctx => postDyeingReceipt(ctx, body, body.lines));
       res.status(201).json(out);
+    } catch (e) { next(e); }
+  });
+
+  /**
+   * For a process house that cannot return the barcodes it was sent. The
+   * quantities are agreed against the issue, and the finished thaans are new
+   * pieces barcoded at the inspection table.
+   */
+  router.post('/dyeing-receipts/by-lot', requireWrite('store'), async (req, res, next) => {
+    try {
+      const body = z.object({
+        issueId: uuid,
+        entryDate: isoDate,
+        challanNo: z.string().min(1).max(50),
+        challanDate: isoDate,
+        jobRate: money.nonnegative().default(0),
+        remarks: z.string().max(500).default(''),
+        pieces: z.array(z.object({
+          barcode: z.string().min(4).max(40),
+          qty: qty.refine(n => n > 0, 'every finished piece needs a length'),
+          weightKg: qty.nullish(),
+          finishGrade: z.string().min(1).max(20),
+          rackCode: z.string().max(20).nullish()
+        })).min(1).max(MAX_DOC_LINES)
+      }).parse(req.body);
+      const out = await withCtx(req, ctx => postLotReceipt(ctx, body, body.pieces));
+      res.status(201).json(out);
+    } catch (e) { next(e); }
+  });
+
+  /** What is still out at a process house, so a lot receipt can name its issue. */
+  router.get('/dyeing-issues/outstanding', async (req, res, next) => {
+    try {
+      const q = z.object({ processHouseId: uuid.optional() }).parse(req.query);
+      const { tenantId, userId } = req.session!;
+      const rows = await withTenant(tenantId, userId, db => many(db,
+        `select di.id as issue_id, di.entry_no, di.entry_date, di.challan_no, di.lot_no,
+                l.name as process_house, di.process_house_id,
+                count(*)::int as thaans, sum(il.issued_qty) as issued_qty,
+                min(di.entry_date) as sent_on,
+                current_date - di.entry_date as days_out
+           from dyeing_issue di
+           join dyeing_issue_line il on il.issue_id = di.id
+           join piece p on p.id = il.piece_id
+           join ledger_account l on l.id = di.process_house_id
+          where is_live(di.status)
+            and p.status in ('issued_to_dyeing','reprocess_at_process_house')
+            and not exists (select 1 from dyeing_receipt_line rl
+                             where rl.issue_line_id = il.id and rl.active)
+            and ($1::uuid is null or di.process_house_id = $1)
+          group by di.id, di.entry_no, di.entry_date, di.challan_no, di.lot_no,
+                   l.name, di.process_house_id
+          order by di.entry_date, di.entry_no`,
+        [q.processHouseId ?? null]));
+      res.json(rows);
     } catch (e) { next(e); }
   });
 

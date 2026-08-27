@@ -58,6 +58,7 @@ export const NAV: NavGroup[] = [
       { id: 'grey_inward', label: 'Grey Inward (Barcoding)' },
       { id: 'dyeing_issue', label: 'Issue To Dyeing' },
       { id: 'dyeing_receipt', label: 'Receive From Dyeing' },
+      { id: 'lot_receipt', label: 'Receive By Lot (No Barcodes Back)' },
       { id: 'reprocess', label: 'Dyeing Reprocess / Rework' },
       { id: 'grey_return', label: 'Grey Return To Weaver' },
       { id: 'dyeing_return', label: 'Dyeing Return To Process House' },
