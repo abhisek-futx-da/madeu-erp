@@ -169,15 +169,25 @@ describe('the Trading Account', () => {
     mockTrading();
     render(<StatementView kind="trading" />);
 
-    expect(await screen.findByText(/Gross Profit c\/d/)).toBeInTheDocument();
+    // Gross profit is carried down as a line in the Dr column and repeated as
+    // the headline, so both columns come to the same total and a reader can
+    // see the account balances without adding it up.
+    await waitFor(() =>
+      expect(screen.getAllByText(/Gross Profit c\/d/)).toHaveLength(2));
     expect(screen.getByText(/31.25% of sales/)).toBeInTheDocument();
     expect(screen.getAllByText(/Purchases and Processing/).length).toBeGreaterThan(0);
+
+    const totals = [...document.querySelectorAll('tfoot tr')].map(r => r.textContent);
+    expect(totals).toHaveLength(2);
+    expect(totals[0]).toEqual(totals[1]);
   });
 
   test('a gross loss is named as one, not shown as a negative profit', async () => {
     mockTrading({ totals: { ...trading.totals, grossProfit: -40000, grossProfitPct: -5 } });
     render(<StatementView kind="trading" />);
-    expect(await screen.findByText(/Gross Loss c\/d/)).toBeInTheDocument();
+    // A loss is carried down on the Cr side instead, and named as a loss.
+    await waitFor(() => expect(screen.getAllByText(/Gross Loss c\/d/)).toHaveLength(2));
+    expect(screen.queryByText(/Gross Profit c\/d/)).not.toBeInTheDocument();
   });
 
   /**
@@ -204,7 +214,7 @@ describe('the Trading Account', () => {
                text: async () => JSON.stringify(trading) } as unknown as Response;
     }));
     render(<StatementView kind="trading" />);
-    await screen.findByText(/Gross Profit c\/d/);
+    await waitFor(() => expect(screen.getAllByText(/Gross Profit c\/d/).length).toBeGreaterThan(0));
 
     fireEvent.change(screen.getByLabelText('View'), { target: { value: 'summary' } });
     await waitFor(() => expect(asked.some(u => u.includes('view=summary'))).toBe(true));

@@ -179,8 +179,10 @@ export function operationalReportRouter() {
           sales, costOfGoodsSold: cogs, otherDirectExpenses: otherDirect,
           grossProfit,
           grossProfitPct: sales > 0 ? round2((grossProfit * 100) / sales) : 0,
-          debitTotal: round2(opening + purchases + otherDirect + grossProfit),
-          creditTotal: round2(sales + closing + stockAdjustments),
+          // Both sides come to the same figure: gross profit is carried down
+          // on the debit side, or a gross loss on the credit side.
+          debitTotal: round2(opening + purchases + otherDirect + Math.max(grossProfit, 0)),
+          creditTotal: round2(sales + closing + stockAdjustments + Math.max(-grossProfit, 0)),
           /** Goods that left stock other than by sale, credited back at cost. */
           stockAdjustments,
           /** Zero on sound books: the two ways of reaching gross profit agree. */
