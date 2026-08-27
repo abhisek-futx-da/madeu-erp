@@ -7,6 +7,7 @@ import { ewayForChallan, ewayForInvoice } from './ewaybill.ts';
 import { listQuery, paged, sendCsv, type ListSpec } from './listing.ts';
 import { REPORTS, reportCatalogue, reportRows, reportTotals } from './reporting.ts';
 import { renderReportPdf } from './pdf.ts';
+import { renderXlsx } from './xlsx.ts';
 import type { Ctx } from './domain.ts';
 
 const uuid = z.string().uuid();
@@ -308,7 +309,7 @@ export function operationalReportRouter() {
     to: isoDate.optional(),
     limit: z.coerce.number().int().min(1).max(5000).default(500),
     offset: z.coerce.number().int().min(0).default(0),
-    format: z.enum(['json', 'csv', 'pdf']).default('json'),
+    format: z.enum(['json', 'csv', 'pdf', 'xlsx']).default('json'),
     /** Columns to print, in order; defaults to everything the view returns. */
     columns: z.string().max(600).optional()
   });
@@ -339,9 +340,10 @@ export function operationalReportRouter() {
 
   /** A page of rows is JSON; a file is the whole report, headed and totalled. */
   async function deliver(res: any, tenantId: string, userId: string, out: {
-    format: 'csv' | 'pdf'; stem: string; title: string; period: string;
+    format: 'csv' | 'pdf' | 'xlsx'; stem: string; title: string; period: string;
     filter: string | null; rows: Record<string, unknown>[];
     columns?: string; totals: Record<string, number>; totalRows: number;
+    dateKeys?: string[];
   }) {
     const keys = out.columns
       ? out.columns.split(',').map(c => c.trim()).filter(Boolean)
@@ -351,6 +353,24 @@ export function operationalReportRouter() {
       : out.rows;
     const stem = `${out.stem}-${out.period}`.replace(/[^A-Za-z0-9._-]+/g, '-');
     if (out.format === 'csv') return sendCsv(res, stem, picked);
+
+    if (out.format === 'xlsx') {
+      /**
+       * Types come from the report's own registry, not from sniffing values.
+       * A column of GSTINs that happens to hold digits is still text, and a
+       * money column that happens to be empty is still a number.
+       */
+      const dates = new Set(out.dateKeys ?? []);
+      const book = renderXlsx(out.title, keys.map(key => ({
+        key, label: humanise(key),
+        type: key in out.totals ? 'number' as const
+            : dates.has(key) ? 'date' as const : 'text' as const
+      })), picked);
+      res.setHeader('content-type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('content-disposition', `attachment; filename="${stem}.xlsx"`);
+      return res.send(book);
+    }
 
     const mill = await withTenant(tenantId, userId, db =>
       one<{ legal_name: string; gstin: string }>(
@@ -387,13 +407,16 @@ export function operationalReportRouter() {
       if (!file || !totals) return res.json(rows);
 
       await deliver(res, tenantId, userId, {
-        format: q.format as 'csv' | 'pdf',
+        format: q.format as 'csv' | 'pdf' | 'xlsx',
         stem: name, title: report.title,
         period: report.dateColumn
           ? `${q.from ?? 'start'} to ${q.to ?? today()}`
           : `as on ${today()}`,
         filter: q.q ?? null, rows, columns: q.columns,
-        totals: totals.totals, totalRows: totals.total
+        totals: totals.totals, totalRows: totals.total,
+        // Any ISO date the view returns, so a spreadsheet gets a real date.
+        dateKeys: Object.keys(rows[0] ?? {})
+          .filter(k => /^\d{4}-\d{2}-\d{2}$/.test(String(rows[0]?.[k] ?? '')))
       });
     } catch (e) { next(e); }
   });
@@ -409,7 +432,7 @@ export function operationalReportRouter() {
         ledgerId: uuid,
         from: isoDate,
         to: isoDate,
-        format: z.enum(['json', 'csv', 'pdf']).default('json'),
+        format: z.enum(['json', 'csv', 'pdf', 'xlsx']).default('json'),
         columns: z.string().max(600).optional()
       }).parse(req.query);
       if (q.to < q.from) return res.status(400).json({ error: '`to` falls before `from`' });

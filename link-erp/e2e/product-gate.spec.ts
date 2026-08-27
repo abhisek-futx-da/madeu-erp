@@ -57,7 +57,8 @@ test('desktop shell, deep links, forms and setup are operable and accessible', a
 
   await page.evaluate(() => { window.location.hash = '#/trial_balance'; });
   await expect(page.getByText('My saved reports')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Excel (CSV)' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Excel', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'CSV', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Print PDF' })).toBeVisible();
   // A trial balance is a position as on today, so it offers no date range.
   await expect(page.getByText(/Position as on today/)).toBeVisible();

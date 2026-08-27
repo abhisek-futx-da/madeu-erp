@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { useApi } from '../lib/useApi';
 import { api, STATUS_LABEL } from '../lib/api';
-import { Columns3, Download, FileText, Printer, Save, Trash2, RefreshCw } from 'lucide-react';
+import { Columns3, Download, FileText, Printer, Save, Sheet, Trash2, RefreshCw } from 'lucide-react';
 
 /**
  * One view over every report the API exposes. They differ only in endpoint
@@ -399,6 +399,8 @@ export const REPORTS: Record<string, ReportSpec> = {
       { key: 'tax_amount', label: 'GST', align: 'right', format: money },
       { key: 'round_off', label: 'Round Off', align: 'right', format: money },
       { key: 'invoice_total', label: 'Bill Total', align: 'right', format: money },
+      { key: 'broker', label: 'Broker' },
+      { key: 'brokerage_amount', label: 'Brokerage', align: 'right', format: money },
       { key: 'irn', label: 'IRN' },
       { key: 'status', label: 'Status', format: status }
     ]
@@ -415,6 +417,7 @@ export const REPORTS: Record<string, ReportSpec> = {
       { key: 'taxable_value', label: 'Taxable', align: 'right', format: money },
       { key: 'tax_amount', label: 'GST', align: 'right', format: money },
       { key: 'invoice_total', label: 'Bill Total', align: 'right', format: money },
+      { key: 'broker', label: 'Broker' },
       { key: 'itc_eligible', label: 'ITC' },
       { key: 'status', label: 'Status', format: status }
     ]
@@ -509,7 +512,7 @@ export const LiveReportView: React.FC<{
   const deleteView=async()=>{if(!selectedView)return;await api.del(`/saved-views/${selectedView}`);saved.reload();setSelectedView('');setViewName('');setMessage('Saved report deleted');};
 
   /** The file is the whole report under these filters, not the page on screen. */
-  const take = async (format: 'csv' | 'pdf') => {
+  const take = async (format: 'csv' | 'pdf' | 'xlsx') => {
     setMessage(`Preparing the ${format.toUpperCase()}…`);
     try {
       await api.download(
@@ -524,7 +527,7 @@ export const LiveReportView: React.FC<{
   return (
     <div className="flex flex-col h-full bg-[#ecf1f7] text-slate-800 text-xs">
       <ToolbarRibbon title={spec.title}
-        onPrint={() => void take('pdf')} onExport={() => void take('csv')} />
+        onPrint={() => void take('pdf')} onExport={() => void take('xlsx')} />
 
       <div className="px-3 py-2 flex flex-wrap items-center gap-2 bg-white border-b border-slate-200">
         <FileText className="w-4 h-4 text-blue-700" />
@@ -564,7 +567,7 @@ export const LiveReportView: React.FC<{
           onClick={() => setOffset(current => current + PAGE)}>Next</button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b bg-blue-50 px-3 py-2"><FileText className="h-4 w-4 text-blue-800"/><strong>My saved reports</strong><select aria-label="Saved report" className="erp-input min-h-11 min-w-48" value={selectedView} onChange={e=>applyView(e.target.value)}><option value="">Choose saved report</option>{(saved.data??[]).map(view=><option key={view.id} value={view.id}>{view.name}</option>)}</select><input aria-label="Saved report name" className="erp-input min-h-11 w-56" placeholder="Name this filter and layout" value={viewName} onChange={e=>setViewName(e.target.value)}/><button disabled={!viewName.trim()} className="erp-btn erp-btn-primary min-h-11" onClick={()=>void saveView()}><Save className="h-4 w-4"/>Save current</button><button disabled={!selectedView} className="erp-btn min-h-11" onClick={()=>void deleteView()}><Trash2 className="h-4 w-4 text-red-700"/>Delete</button><button className="erp-btn min-h-11" onClick={()=>void take('csv')}><Download className="h-4 w-4"/>Excel (CSV)</button><button className="erp-btn min-h-11" onClick={()=>void take('pdf')}><Printer className="h-4 w-4"/>Print PDF</button>{message&&<span role="status" className="font-semibold text-emerald-800">{message}</span>}</div>
+      <div className="flex flex-wrap items-center gap-2 border-b bg-blue-50 px-3 py-2"><FileText className="h-4 w-4 text-blue-800"/><strong>My saved reports</strong><select aria-label="Saved report" className="erp-input min-h-11 min-w-48" value={selectedView} onChange={e=>applyView(e.target.value)}><option value="">Choose saved report</option>{(saved.data??[]).map(view=><option key={view.id} value={view.id}>{view.name}</option>)}</select><input aria-label="Saved report name" className="erp-input min-h-11 w-56" placeholder="Name this filter and layout" value={viewName} onChange={e=>setViewName(e.target.value)}/><button disabled={!viewName.trim()} className="erp-btn erp-btn-primary min-h-11" onClick={()=>void saveView()}><Save className="h-4 w-4"/>Save current</button><button disabled={!selectedView} className="erp-btn min-h-11" onClick={()=>void deleteView()}><Trash2 className="h-4 w-4 text-red-700"/>Delete</button><button className="erp-btn min-h-11" onClick={()=>void take('xlsx')}><Sheet className="h-4 w-4"/>Excel</button><button className="erp-btn min-h-11" onClick={()=>void take('csv')}><Download className="h-4 w-4"/>CSV</button><button className="erp-btn min-h-11" onClick={()=>void take('pdf')}><Printer className="h-4 w-4"/>Print PDF</button>{message&&<span role="status" className="font-semibold text-emerald-800">{message}</span>}</div>
 
       {error && (
         <div className="bg-red-600 text-white px-4 py-1.5 font-semibold">{error}</div>
