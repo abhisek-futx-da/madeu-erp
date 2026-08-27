@@ -4,7 +4,7 @@ import { useApi, useSubmit } from '../lib/useApi';
 import { usePagedList } from '../lib/usePagedList';
 import { ListControls } from '../components/ListControls';
 import { api, type Page } from '../lib/api';
-import { AlertTriangle, CheckCircle2, Download, FileJson, Paperclip, Printer, Receipt, Settings2, Truck, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileJson, Mail, Paperclip, Printer, Receipt, Settings2, Truck, X } from 'lucide-react';
 import { InvoicePrintView } from './InvoicePrintView';
 import { DocumentAttachments } from '../components/DocumentAttachments';
 import { CustomFieldsPanel } from '../components/CustomFieldsPanel';
@@ -67,6 +67,32 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
   const showPayload = async (row: InvoiceRow) => {
     const doc = await api.get<{ payload: unknown }>(`/sales-invoices/${row.id}/einvoice`);
     setPayload({ no: row.invoice_no, json: doc.payload });
+  };
+
+  /**
+   * Queues the invoice for the customer. It is not sent from here: a mail
+   * server that is slow or down must not be able to fail the screen, and an
+   * unconfigured mill is told so rather than left wondering.
+   */
+  const emailInvoice = async (row: any) => {
+    try {
+      const out = await api.post<any>(`/documents/sales_invoice/${row.id}/email`, {});
+      setNotice(`${row.invoice_no}: ${out.message} (${out.to})`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      // No address on file is the common case and it is a fixable mistake.
+      const typed = /no email address on file/.test(message)
+        ? window.prompt(`No address on file for this customer.\nType one to send this invoice:`)
+        : null;
+      if (!typed) { setNotice(message); return; }
+      try {
+        const out = await api.post<any>(
+          `/documents/sales_invoice/${row.id}/email`, { toEmail: typed.trim() });
+        setNotice(`${row.invoice_no}: ${out.message} (${out.to})`);
+      } catch (again) {
+        setNotice(again instanceof Error ? again.message : String(again));
+      }
+    }
   };
 
   /** Rule 138 Part A for the consignment this invoice covers. */
@@ -225,6 +251,10 @@ export const SalesInvoiceView: React.FC<{ session: Session }> = ({ session }) =>
                     </button>
                     <button onClick={() => showPayload(i)} className="erp-btn" title="View IRP payload">
                       <FileJson className="w-3.5 h-3.5 text-blue-600" />
+                    </button>
+                    <button onClick={() => void emailInvoice(i)} className="erp-btn"
+                      title="Email this invoice to the customer">
+                      <Mail className="w-3.5 h-3.5 text-blue-700" />
                     </button>
                     <button onClick={()=>setAttachmentFor(i)} className="erp-btn" title="Attach signed invoice, LR or customer evidence"><Paperclip className="h-3.5 w-3.5 text-blue-700"/></button>
                     <button onClick={()=>setCustomFor(i)} className="erp-btn" title="Edit custom invoice fields"><Settings2 className="h-3.5 w-3.5 text-violet-700"/></button>

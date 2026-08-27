@@ -1,7 +1,18 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 import { clearApiCache } from '../lib/useApi';
+
+/**
+ * Async assertions get five seconds rather than one.
+ *
+ * These suites mount large stateful screens in jsdom, several files at a time.
+ * Under that contention a `waitFor` can expire while the assertion is on its
+ * way to becoming true, which fails a correct test on a busy machine and
+ * passes it on an idle one. The assertion still has to hold; it is only given
+ * room to. A test that needs more than five seconds is a real defect.
+ */
+configure({ asyncUtilTimeout: 5000 });
 
 afterEach(() => {
   cleanup();

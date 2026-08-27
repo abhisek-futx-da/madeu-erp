@@ -230,6 +230,27 @@ export const REPORTS: Record<string, ReportSpec> = {
     groupBy: 'party',
     numeric: ['invoice_total', 'paid', 'outstanding']
   }),
+  'document-emails': spec('v_document_email', 'Email Outbox', {
+    date: 'created_at',
+    search: ['to_email', 'to_name', 'subject', 'state', 'doc_type', 'queued_by'],
+    order: 'created_at desc',
+    groupBy: 'state',
+    numeric: ['attempts']
+  }),
+  'interest-receivable': spec('v_interest_receivable', 'Interest On Overdue Bills', {
+    date: 'due_date',
+    search: ['party', 'party_code', 'invoice_no'],
+    order: 'party, invoice_date, invoice_no',
+    groupBy: 'party',
+    numeric: ['outstanding', 'interest']
+    // overdue_days and rate_pct are per bill; summing either says nothing.
+  }),
+  'stock-by-location': spec('v_stock_by_location', 'Stock By Godown', {
+    search: ['location', 'location_code', 'location_kind', 'status'],
+    order: 'location, status',
+    groupBy: 'location',
+    numeric: ['pcs', 'qty', 'weight_kg', 'total_cost', 'racks_used']
+  }),
   'receivable-ageing': spec('v_receivable_ageing', 'Receivable Ageing', {
     date: 'invoice_date',
     search: ['code', 'party', 'invoice_no', 'bucket'],

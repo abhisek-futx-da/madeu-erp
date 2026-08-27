@@ -427,6 +427,52 @@ export const REPORTS: Record<string, ReportSpec> = {
       { key: 'narration', label: 'Narration' }
     ]
   },
+  document_emails: {
+    title: 'Email Outbox — what has gone out, what is waiting, and why',
+    path: '/reports/document-emails',
+    columns: [
+      { key: 'created_at', label: 'Queued', format: when },
+      { key: 'state', label: 'State' },
+      { key: 'doc_type', label: 'Document' },
+      { key: 'to_name', label: 'To' },
+      { key: 'to_email', label: 'Address' },
+      { key: 'subject', label: 'Subject' },
+      { key: 'attempts', label: 'Tries', align: 'right' },
+      { key: 'sent_at', label: 'Sent', format: when },
+      { key: 'last_error', label: 'Last problem' },
+      { key: 'queued_by', label: 'By' }
+    ]
+  },
+  interest_receivable: {
+    title: 'Interest On Overdue Bills — a claim, not a posting',
+    path: '/reports/interest-receivable',
+    columns: [
+      { key: 'party_code', label: 'Code' },
+      { key: 'party', label: 'Customer' },
+      { key: 'invoice_no', label: 'Invoice' },
+      { key: 'invoice_date', label: 'Date' },
+      { key: 'due_date', label: 'Due' },
+      { key: 'outstanding', label: 'Outstanding', align: 'right', format: money },
+      { key: 'rate_pct', label: 'Rate %', align: 'right', format: pct },
+      { key: 'overdue_days', label: 'Days Over', align: 'right' },
+      { key: 'interest', label: 'Interest', align: 'right', format: money }
+    ]
+  },
+  stock_by_location: {
+    title: 'Stock By Godown — what is standing where',
+    path: '/reports/stock-by-location',
+    columns: [
+      { key: 'location_code', label: 'Code' },
+      { key: 'location', label: 'Godown / Branch / Outlet' },
+      { key: 'location_kind', label: 'Kind' },
+      { key: 'status', label: 'Stage', format: status },
+      { key: 'pcs', label: 'Pcs', align: 'right' },
+      { key: 'qty', label: 'Qty (Mtr)', align: 'right', format: num },
+      { key: 'weight_kg', label: 'Kg', align: 'right', format: num },
+      { key: 'racks_used', label: 'Racks', align: 'right' },
+      { key: 'total_cost', label: 'Value', align: 'right', format: money }
+    ]
+  },
   sales_register: {
     title: 'Sales Register — every bill raised, in date order',
     path: '/reports/sales-register',

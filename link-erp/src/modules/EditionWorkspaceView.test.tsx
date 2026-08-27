@@ -27,14 +27,21 @@ describe('parallel edition workspace',()=>{
     render(<EditionWorkspaceView edition="weaving" session={session}/>);
     fireEvent.change(await screen.findByLabelText('Loom number'),{target:{value:'L-18'}});
     fireEvent.change(screen.getByLabelText('Planned metres'),{target:{value:'725'}});
-    fireEvent.click(screen.getByRole('button',{name:'Create draft'}));
+    // The screen loads a catalogue, a document list and a resource list. Wait
+    // for the button to mean something rather than clicking while it is still
+    // inert — under load those fetches settle after the fields have rendered.
+    const create=screen.getByRole('button',{name:'Create draft'});
+    await waitFor(()=>expect(create).toBeEnabled());
+    fireEvent.click(create);
     await waitFor(()=>expect(sent.some(call=>call.path==='/editions/weaving/documents')).toBe(true));
     expect(sent.find(call=>call.path==='/editions/weaving/documents')!.body).toEqual(expect.objectContaining({docType:'loom_plan',payload:{loomNo:'L-18',plannedMetres:725}}));
   });
 
   test('starts an edition document using the guarded lifecycle endpoint',async()=>{
     render(<EditionWorkspaceView edition="weaving" session={session}/>);
-    fireEvent.click(await screen.findByRole('button',{name:'Start'}));
+    const start=await screen.findByRole('button',{name:'Start'});
+    await waitFor(()=>expect(start).toBeEnabled());
+    fireEvent.click(start);
     await waitFor(()=>expect(sent.find(call=>call.path.endsWith('/status'))?.body).toEqual({status:'in_progress',reason:''}));
   });
 
