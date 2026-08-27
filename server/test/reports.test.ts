@@ -311,6 +311,26 @@ test('a report prints as a PDF headed with the mill and the period', async () =>
   assert.match(r.text, /TOTAL/, 'a printed report with no total line');
 });
 
+test('the printed total is the whole figure, not a truncated one', async () => {
+  const summary = await api('/api/reports/day-book/summary?from=2026-04-01&to=2027-03-31');
+  const debit = Number(summary.body.totals.debit);
+  assert.ok(debit > 0, 'nothing posted, so nothing to print');
+
+  const pdf = await api(
+    '/api/reports/day-book?format=pdf&from=2026-04-01&to=2027-03-31' +
+    '&columns=voucher_date,voucher_type,voucher_no,ledger,debit,credit');
+  assert.equal(pdf.status, 200);
+
+  /**
+   * Columns were sized from the data rows alone, so a total wider than any
+   * single row that feeds it — which it almost always is — printed clipped.
+   * The figure on the page has to be the figure in the footer.
+   */
+  const printed = debit.toFixed(2);
+  assert.ok(pdf.text.includes(printed),
+    `the footer total ${printed} does not appear in the PDF; it was printed truncated`);
+});
+
 test('a ledger prints too, showing its opening and closing on the page', async () => {
   const r = await api(`/api/ledger?ledgerId=${WEAVER}&from=2026-04-01&to=2027-03-31&format=pdf`);
   assert.equal(r.status, 200);

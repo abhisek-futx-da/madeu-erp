@@ -57,12 +57,27 @@ test('desktop shell, deep links, forms and setup are operable and accessible', a
 
   await page.evaluate(() => { window.location.hash = '#/trial_balance'; });
   await expect(page.getByText('My saved reports')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Export visible columns' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Excel (CSV)' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Print PDF' })).toBeVisible();
+  // A trial balance is a position as on today, so it offers no date range.
+  await expect(page.getByText(/Position as on today/)).toBeVisible();
+  await expect(page.getByLabel('From date')).toHaveCount(0);
   await page.getByText(/Columns \(6\/6\)/).click();
   await page.getByLabel('Control A/c').uncheck();
   await expect(page.getByRole('columnheader', { name: 'Control A/c' })).toHaveCount(0);
   const reportA11y = await new AxeBuilder({ page }).analyze();
   expect(reportA11y.violations.filter(v => ['critical', 'serious'].includes(v.impact ?? ''))).toEqual([]);
+
+  // A period report does offer one, and a ledger opens with a carried balance.
+  await page.evaluate(() => { window.location.hash = '#/day_book'; });
+  await expect(page.getByLabel('From date')).toBeVisible();
+  await expect(page.getByLabel('To date')).toBeVisible();
+
+  await page.evaluate(() => { window.location.hash = '#/ledger'; });
+  await expect(page.getByLabel('Account', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Choose an account to see its ledger/)).toBeVisible();
+  const ledgerA11y = await new AxeBuilder({ page }).analyze();
+  expect(ledgerA11y.violations.filter(v => ['critical', 'serious'].includes(v.impact ?? ''))).toEqual([]);
 
   await page.evaluate(() => { window.location.hash = '#/platform_studio'; });
   await expect(page.getByRole('heading', { name: /Define one field/ })).toBeVisible();
