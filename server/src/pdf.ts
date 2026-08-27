@@ -189,6 +189,9 @@ export interface ReportDoc {
   totals: Record<string, number>;
   /** Rows behind the totals, which exceeds `rows.length` on a truncated export. */
   totalRows: number;
+  /** The column the rows break on, and the subtotal for each break. */
+  groupBy?: string;
+  groups?: { label: string; rows: number; totals: Record<string, number> }[];
 }
 
 /** A4 landscape. A report table is wide, and portrait clips it. */
@@ -241,14 +244,38 @@ function reportPages(doc: ReportDoc): PdfPage[] {
   };
   const push = () => { pages.push(page); page = []; y = 560; };
 
+  const subtotal = new Map(
+    (doc.groups ?? []).map(g => [g.label, g] as const));
+
   heading();
+  let group: string | null = null;
+  /** "TOTAL OF Bombay Crimpers Pvt. Ltd." — the line the reader is looking for. */
+  const closeGroup = () => {
+    if (group === null) return;
+    const g = subtotal.get(group);
+    if (!g) return;
+    add(row(doc.columns.map((c, i) =>
+      i === 0 ? `TOTAL OF ${group}`
+              : (c.key in g.totals ? money(g.totals[c.key]!) : ''))), 7, 13, true);
+  };
+
   for (const r of doc.rows) {
+    if (doc.groupBy) {
+      const label = String(r[doc.groupBy] ?? '(none)');
+      if (label !== group) {
+        if (y < 60) { push(); heading(); }
+        closeGroup();
+        group = label;
+      }
+    }
     if (y < 46) { push(); heading(); }
     add(row(doc.columns.map(c => {
       const v = r[c.key];
       return typeof v === 'number' ? v.toFixed(2) : v;
     })), 7, 10);
   }
+  if (y < 60) { push(); heading(); }
+  closeGroup();
 
   if (y < 62) { push(); heading(); }
   y -= 4;
@@ -268,4 +295,86 @@ function reportPages(doc: ReportDoc): PdfPage[] {
 
 export function renderReportPdf(doc: ReportDoc): Buffer {
   return renderPages(reportPages(doc), LANDSCAPE);
+}
+
+// ----------------------------------------------------- ledger confirmation --
+
+export interface ConfirmationLine {
+  voucher_date: string; voucher_type: string; voucher_no: string;
+  narration: string; debit: number; credit: number; running_balance: number;
+}
+
+export interface ConfirmationDoc {
+  millName: string; millGstin: string; millAddress: string;
+  partyName: string; partyCode: string; partyGstin: string | null;
+  from: string; to: string;
+  opening: number; closing: number;
+  totals: { debit: number; credit: number };
+  lines: ConfirmationLine[];
+}
+
+/** Dr and Cr, the way an Indian ledger is read and confirmed. */
+const sided = (amount: number) =>
+  `${money(Math.abs(amount))} ${amount < 0 ? 'Cr' : 'Dr'}`;
+
+/**
+ * The letter a mill sends a party to agree a balance: the account as our
+ * books have it, and a block for them to sign it back. This is what an
+ * auditor asks for at year end, and what settles an argument in March.
+ */
+function confirmationPages(doc: ConfirmationDoc): PdfPage[] {
+  const pages: PdfPage[] = [];
+  let page: PdfPage = [];
+  let y = 800;
+  const add = (text: string, x = 40, size = 9, gap = 13, bold = false) => {
+    page.push({ text, x, y, size, bold }); y -= gap;
+  };
+  const push = () => { pages.push(page); page = []; y = 800; };
+  const COLUMNS = ' Date        Particulars                        Voucher            Debit           Credit          Balance';
+
+  const heading = (continued = false) => {
+    add(doc.millName, 40, 15, 19, true);
+    add(`GSTIN: ${doc.millGstin}`, 40, 8, 12);
+    add(doc.millAddress, 40, 8, 16);
+    add(`LEDGER CONFIRMATION OF ACCOUNT${continued ? ' (continued)' : ''}`, 40, 11, 17, true);
+    add(`${doc.partyCode} — ${doc.partyName}    GSTIN: ${doc.partyGstin ?? 'URP'}`, 40, 9, 13, true);
+    add(`For the period ${doc.from} to ${doc.to}`, 40, 9, 16);
+    add(COLUMNS, 40, 7.5, 13, true);
+  };
+
+  heading();
+  add(`${cell(doc.from, 11)} ${cell('Opening balance', 34)} ${cell('', 16)} ` +
+      `${cell('', 15, true)} ${cell('', 15, true)} ${cell(sided(doc.opening), 16, true)}`,
+      40, 7.5, 12, true);
+
+  for (const line of doc.lines) {
+    if (y < 150) { push(); heading(); }
+    add(`${cell(line.voucher_date, 11)} ${cell(line.narration, 34)} ` +
+        `${cell(`${line.voucher_type} ${line.voucher_no}`, 16)} ` +
+        `${cell(Number(line.debit) ? money(line.debit) : '', 15, true)} ` +
+        `${cell(Number(line.credit) ? money(line.credit) : '', 15, true)} ` +
+        `${cell(sided(Number(line.running_balance)), 16, true)}`, 40, 7.5, 11);
+  }
+
+  if (y < 210) { push(); heading(); }
+  y -= 6;
+  add(`${cell('', 11)} ${cell('Period total', 34)} ${cell('', 16)} ` +
+      `${cell(money(doc.totals.debit), 15, true)} ${cell(money(doc.totals.credit), 15, true)} ` +
+      `${cell(sided(doc.closing), 16, true)}`, 40, 8.5, 18, true);
+
+  add(`Closing balance as per our books on ${doc.to}: Rs ${sided(doc.closing)}`, 40, 10, 20, true);
+  add('Please confirm the above balance. If it does not agree with your books, return this', 40, 8.5, 12);
+  add('letter with your figure and the difference marked, and we will reconcile it with you.', 40, 8.5, 22);
+
+  add('Balance confirmed as per our books:  Rs ______________________  Dr / Cr', 40, 9, 26, true);
+  add('Difference, if any: ______________________________________________________', 40, 8.5, 30);
+  add('For ' + doc.partyName, 40, 9, 34, true);
+  add('Signature: ____________________     Name: ____________________     Date: __________', 40, 8.5, 20);
+  add('This statement is from our books. It is not a demand for payment.', 40, 7, 12);
+  push();
+  return pages;
+}
+
+export function renderLedgerConfirmationPdf(doc: ConfirmationDoc): Buffer {
+  return renderPages(confirmationPages(doc));
 }

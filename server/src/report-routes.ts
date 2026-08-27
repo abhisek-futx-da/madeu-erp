@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { many, one, withTenant } from './db.ts';
+import { many, one, withTenant, nextDocNumber } from './db.ts';
 import { requireWrite } from './auth.ts';
-import { amountInWords } from './money.ts';
+import { amountInWords, round2 } from './money.ts';
 import { ewayForChallan, ewayForInvoice } from './ewaybill.ts';
 import { listQuery, paged, sendCsv, type ListSpec } from './listing.ts';
 import { REPORTS, reportCatalogue, reportRows, reportTotals } from './reporting.ts';
-import { renderReportPdf } from './pdf.ts';
+import { renderReportPdf, renderLedgerConfirmationPdf } from './pdf.ts';
 import { renderXlsx } from './xlsx.ts';
+import { postVoucher } from './payments.ts';
 import type { Ctx } from './domain.ts';
 
 const uuid = z.string().uuid();
@@ -58,7 +59,119 @@ export function operationalReportRouter() {
   const period = z.object({
     from: isoDate.optional(),
     to: isoDate.optional(),
+    /** Ledger by ledger, or one line per accounting head. */
+    view: z.enum(['details', 'summary']).default('details'),
     format: z.enum(['json', 'csv']).default('json')
+  });
+
+  interface StatementRow extends Record<string, unknown> {
+    section: string; code: string; name: string;
+    control_account: string; amount: number;
+  }
+
+  /**
+   * A statement reads either way round: an accountant checking a figure wants
+   * the ledger, an owner wants the head. Rolling up here rather than in a
+   * second query keeps the two views arithmetically identical by construction.
+   */
+  const summarise = (rows: StatementRow[]): StatementRow[] => {
+    const heads = new Map<string, StatementRow>();
+    for (const row of rows) {
+      const key = `${row.section}|${row.control_account}`;
+      const seen = heads.get(key);
+      if (seen) seen.amount = round2(seen.amount + Number(row.amount));
+      else heads.set(key, { ...row, code: '', name: row.control_account,
+                            amount: round2(Number(row.amount)) });
+    }
+    return [...heads.values()];
+  };
+
+  const viewOf = (rows: StatementRow[], view: 'details' | 'summary') =>
+    view === 'summary' ? summarise(rows) : rows;
+
+  /**
+   * The Trading Account. Opening stock, what came in and the direct costs on
+   * one side; sales and closing stock on the other. The balancing figure is
+   * Gross Profit, and it is checked rather than asserted: the same figure
+   * computed straight from direct income less direct expenses must agree, and
+   * where it does not the difference is named.
+   */
+  router.get('/statements/trading', async (req, res, next) => {
+    try {
+      const q = period.parse(req.query);
+      const to = q.to ?? new Date().toISOString().slice(0, 10);
+      const from = q.from ?? `${fyLabel(new Date(to)).slice(0, 4)}-04-01`;
+      const { tenantId, userId } = req.session!;
+
+      const { sections, stock } = await withTenant(tenantId, userId, async db => ({
+        sections: await many<StatementRow & { sub_control: string }>(
+          db, 'select * from report_pl_sections($1::date, $2::date)', [from, to]),
+        stock: await one<{ opening: number; purchases: number; consumed: number; closing: number }>(
+          db, 'select * from report_stock_movement($1::date, $2::date)', [from, to])
+      }));
+
+      const of = (section: string) => sections.filter(r => r.section === section);
+      const total = (section: string) =>
+        round2(of(section).reduce((n, r) => n + Number(r.amount), 0));
+
+      const opening = Number(stock?.opening ?? 0);
+      const purchases = Number(stock?.purchases ?? 0);
+      const consumed = Number(stock?.consumed ?? 0);
+      const closing = Number(stock?.closing ?? 0);
+
+      const sales = total('trading_income');
+      // Cost of goods sold sits inside `consumed`; the rest of Direct Expenses
+      // is a bill nobody capitalised, and it is a line of its own.
+      const cogs = round2(of('trading_expense')
+        .filter(r => /cost of goods/i.test(r.control_account))
+        .reduce((n, r) => n + Number(r.amount), 0));
+      const otherDirect = round2(total('trading_expense') - cogs);
+
+      const grossProfit = round2(sales + closing - opening - purchases - otherDirect);
+      // What left stock other than by sale — write-offs, shortage. Classified
+      // indirect, so the perpetual figure excludes it and this one does not.
+      const stockAdjustments = round2(consumed - cogs);
+      const perpetual = round2(sales - cogs - otherDirect);
+
+      const debit = [
+        { section: 'opening_stock', code: '', name: 'Opening Stock',
+          control_account: 'Stock', amount: opening },
+        { section: 'purchases', code: '', name: 'Purchases and Processing',
+          control_account: 'Stock', amount: purchases },
+        ...viewOf(of('trading_expense').filter(r => !/cost of goods/i.test(r.control_account)),
+                  q.view)
+      ];
+      const credit = [
+        ...viewOf(of('trading_income'), q.view),
+        { section: 'closing_stock', code: '', name: 'Closing Stock',
+          control_account: 'Stock', amount: closing }
+      ];
+
+      if (q.format === 'csv') {
+        return sendCsv(res, `trading-account-${from}-to-${to}`, [
+          ...debit.map(r => ({ side: 'Dr', ...r })),
+          { side: 'Dr', section: 'gross_profit', code: '', name: 'Gross Profit c/d',
+            control_account: '', amount: grossProfit },
+          ...credit.map(r => ({ side: 'Cr', ...r }))
+        ]);
+      }
+
+      res.json({
+        from, to, view: q.view, debit, credit,
+        totals: {
+          openingStock: opening, purchases, closingStock: closing,
+          sales, costOfGoodsSold: cogs, otherDirectExpenses: otherDirect,
+          grossProfit,
+          grossProfitPct: sales > 0 ? round2((grossProfit * 100) / sales) : 0,
+          debitTotal: round2(opening + purchases + otherDirect + grossProfit),
+          creditTotal: round2(sales + closing),
+          /** Goods that left stock other than by sale. */
+          stockAdjustments,
+          /** Zero on sound books: the two ways of reaching gross profit agree. */
+          difference: round2(grossProfit - (perpetual - stockAdjustments))
+        }
+      });
+    } catch (e) { next(e); }
   });
 
   router.get('/statements/profit-loss', async (req, res, next) => {
@@ -68,17 +181,19 @@ export function operationalReportRouter() {
       const from = q.from ?? `${fyLabel(new Date(to)).slice(0, 4)}-04-01`;
       const { tenantId, userId } = req.session!;
       const rows = await withTenant(tenantId, userId, db =>
-        many<{ section: string; amount: number }>(
+        many<StatementRow>(
           db, 'select * from report_profit_loss($1::date, $2::date)', [from, to]));
-      if (q.format === 'csv') return sendCsv(res, `profit-loss-${from}-to-${to}`, rows);
+
+      const shown = viewOf(rows, q.view);
+      if (q.format === 'csv') return sendCsv(res, `profit-loss-${from}-to-${to}`, shown);
 
       const total = (s: string) =>
         rows.filter(r => r.section === s).reduce((n, r) => n + Number(r.amount), 0);
       const income = total('income');
       const expense = total('expense');
       res.json({
-        from, to, rows,
-        totals: { income, expense, netProfit: Math.round((income - expense) * 100) / 100 }
+        from, to, view: q.view, rows: shown,
+        totals: { income, expense, netProfit: round2(income - expense) }
       });
     } catch (e) { next(e); }
   });
@@ -89,9 +204,10 @@ export function operationalReportRouter() {
       const asOn = q.to ?? new Date().toISOString().slice(0, 10);
       const { tenantId, userId } = req.session!;
       const rows = await withTenant(tenantId, userId, db =>
-        many<{ section: string; amount: number }>(
-          db, 'select * from report_balance_sheet($1::date)', [asOn]));
-      if (q.format === 'csv') return sendCsv(res, `balance-sheet-as-on-${asOn}`, rows);
+        many<StatementRow>(db, 'select * from report_balance_sheet($1::date)', [asOn]));
+
+      const shown = viewOf(rows, q.view);
+      if (q.format === 'csv') return sendCsv(res, `balance-sheet-as-on-${asOn}`, shown);
 
       const total = (s: string) =>
         rows.filter(r => r.section === s).reduce((n, r) => n + Number(r.amount), 0);
@@ -99,7 +215,7 @@ export function operationalReportRouter() {
       const liabilities = total('liability');
       const equity = total('equity');
       res.json({
-        asOn, rows,
+        asOn, view: q.view, rows: shown,
         totals: {
           assets, liabilities, equity,
           // Zero on a healthy set of books; anything else is a posting defect.
@@ -107,6 +223,145 @@ export function operationalReportRouter() {
         }
       });
     } catch (e) { next(e); }
+  });
+
+  /**
+   * The letter sent to a party to agree a balance — the same period ledger,
+   * laid out for them to sign back. An auditor asks for this at year end and
+   * it is what settles an argument in March.
+   */
+  router.get('/ledger-confirmation', async (req, res, next) => {
+    try {
+      const q = z.object({
+        ledgerId: uuid, from: isoDate, to: isoDate,
+        format: z.enum(['json', 'pdf']).default('json')
+      }).parse(req.query);
+      if (q.to < q.from) return res.status(400).json({ error: '`to` falls before `from`' });
+      const { tenantId, userId } = req.session!;
+
+      const data = await withTenant(tenantId, userId, async db => ({
+        party: await one<{ code: string; name: string; gstin: string | null }>(
+          db, 'select code, name, gstin from ledger_account where id = $1', [q.ledgerId]),
+        mill: await one<{ legal_name: string; gstin: string; address: string | null }>(
+          db, `select legal_name, gstin,
+                      concat_ws(', ', address1, address2, city, state_code, pincode)
+                        as address
+                 from tenant where id = $1`, [tenantId]),
+        rows: await many<Record<string, unknown>>(
+          db, 'select * from report_ledger($1::uuid, $2::date, $3::date)',
+          [q.ledgerId, q.from, q.to])
+      }));
+      if (!data.party) return res.status(404).json({ error: 'no such ledger' });
+
+      const opening = Number(data.rows[0]?.running_balance ?? 0);
+      const closing = Number(data.rows[data.rows.length - 1]?.running_balance ?? opening);
+      // Row 0 is the opening; adding it to the period's debits would double it.
+      const moves = data.rows.slice(1);
+      const sum = (k: string) => round2(moves.reduce((n, r) => n + Number(r[k] ?? 0), 0));
+      const totals = { debit: sum('debit'), credit: sum('credit') };
+
+      if (q.format === 'json') {
+        return res.json({ party: data.party, from: q.from, to: q.to,
+                          opening, closing, totals, rows: data.rows });
+      }
+
+      const pdf = renderLedgerConfirmationPdf({
+        millName: data.mill?.legal_name ?? 'Link ERP',
+        millGstin: data.mill?.gstin ?? '—',
+        millAddress: data.mill?.address ?? '',
+        partyName: data.party.name, partyCode: data.party.code,
+        partyGstin: data.party.gstin,
+        from: q.from, to: q.to, opening, closing, totals,
+        lines: moves as any
+      });
+      const stem = `ledger-confirmation-${data.party.code}-${q.from}-to-${q.to}`
+        .replace(/[^A-Za-z0-9._-]+/g, '-');
+      res.setHeader('content-type', 'application/pdf');
+      res.setHeader('content-disposition', `attachment; filename="${stem}.pdf"`);
+      res.send(pdf);
+    } catch (e) { next(e); }
+  });
+
+  // ------------------------------------------------------------- contra --
+
+  /**
+   * Cash to bank, bank to bank, cash drawn for wages. No party, nothing
+   * bought or sold — booking it as a receipt or payment puts an invented
+   * counterparty into somebody's ledger.
+   */
+  router.post('/contra-entries', requireWrite('accounts'), async (req, res, next) => {
+    try {
+      const body = z.object({
+        entryDate: isoDate,
+        fromLedgerId: uuid,
+        toLedgerId: uuid,
+        amount: z.coerce.number().positive().max(1e11),
+        instrumentNo: z.string().max(40).nullish(),
+        narration: z.string().max(300).default('')
+      }).parse(req.body);
+      if (body.fromLedgerId === body.toLedgerId) {
+        return res.status(400).json({ error: 'money cannot move from an account to itself' });
+      }
+
+      const out = await withCtx(req, async ctx => {
+        // Only the mill's own money: a contra against a supplier would be a
+        // payment wearing the wrong name.
+        const ends = await many<{ id: string; name: string; nature: string }>(
+          ctx.db,
+          `select la.id, la.name, ca.nature::text
+             from ledger_account la
+             join control_account ca on ca.id = la.control_account_id
+            where la.id = any($1::uuid[])`,
+          [[body.fromLedgerId, body.toLedgerId]]
+        );
+        if (ends.length !== 2) throw new Error('one of those accounts does not exist');
+        const wrong = ends.filter(l => l.nature !== 'cash' && l.nature !== 'bank');
+        if (wrong.length > 0) {
+          throw new Error(
+            `a contra moves the mill's own money: ${wrong.map(l => l.name).join(', ')} ` +
+            'is not a cash or bank account'
+          );
+        }
+
+        const entryNo = await nextDocNumber(ctx.db, ctx.tenantId, 'contra_entry', ctx.fy);
+        const row = await one<{ id: string }>(
+          ctx.db,
+          `insert into contra_entry (tenant_id, entry_no, entry_date, from_ledger_id,
+                                     to_ledger_id, amount, instrument_no, narration, created_by)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+          [ctx.tenantId, entryNo, body.entryDate, body.fromLedgerId, body.toLedgerId,
+           body.amount, body.instrumentNo ?? null, body.narration, ctx.userId]
+        );
+        if (!row) throw new Error('contra insert returned nothing');
+
+        const from = ends.find(l => l.id === body.fromLedgerId)!;
+        const to = ends.find(l => l.id === body.toLedgerId)!;
+        const voucherId = await postVoucher(
+          ctx, 'contra', body.entryDate,
+          body.narration || `${from.name} to ${to.name}`,
+          'contra_entry', row.id,
+          [
+            { ledgerId: body.toLedgerId, debit: body.amount },
+            { ledgerId: body.fromLedgerId, credit: body.amount }
+          ]
+        );
+        await ctx.db.query('update contra_entry set voucher_id = $2 where id = $1',
+          [row.id, voucherId]);
+        return { id: row.id, entryNo, amount: body.amount, voucherId,
+                 from: from.name, to: to.name };
+      });
+      res.status(201).json(out);
+    } catch (e) { next(e); }
+  });
+
+  listRoute('/contra-entries', 'contra-entries', {
+    from: 'v_contra_entry c',
+    select: `c.id, c.entry_no, c.entry_date, c.from_code, c.from_account,
+             c.to_code, c.to_account, c.amount, c.instrument_no, c.narration,
+             c.status, c.voucher_no`,
+    search: ['c.entry_no', 'c.from_account', 'c.to_account', 'c.instrument_no', 'c.narration'],
+    dateColumn: 'c.entry_date',
+    orderBy: 'c.entry_date desc, c.entry_no desc'
   });
 
   // ----------------------------------------------- delivery challan (Rule 55) --
@@ -344,6 +599,8 @@ export function operationalReportRouter() {
     filter: string | null; rows: Record<string, unknown>[];
     columns?: string; totals: Record<string, number>; totalRows: number;
     dateKeys?: string[];
+    groupBy?: string;
+    groups?: { label: string; rows: number; totals: Record<string, number> }[];
   }) {
     const keys = out.columns
       ? out.columns.split(',').map(c => c.trim()).filter(Boolean)
@@ -380,7 +637,10 @@ export function operationalReportRouter() {
       millGstin: mill?.gstin ?? '—',
       title: out.title, period: out.period, filter: out.filter,
       columns: keys.map(key => ({ key, label: humanise(key), right: key in out.totals })),
-      rows: picked, totals: out.totals, totalRows: out.totalRows
+      rows: picked, totals: out.totals, totalRows: out.totalRows,
+      // Subtotals only print where the grouping column is on the page.
+      groupBy: out.groupBy && keys.includes(out.groupBy) ? out.groupBy : undefined,
+      groups: out.groups
     });
     res.setHeader('content-type', 'application/pdf');
     res.setHeader('content-disposition', `attachment; filename="${stem}.pdf"`);
@@ -414,6 +674,7 @@ export function operationalReportRouter() {
           : `as on ${today()}`,
         filter: q.q ?? null, rows, columns: q.columns,
         totals: totals.totals, totalRows: totals.total,
+        groupBy: report.groupBy, groups: totals.groups,
         // Any ISO date the view returns, so a spreadsheet gets a real date.
         dateKeys: Object.keys(rows[0] ?? {})
           .filter(k => /^\d{4}-\d{2}-\d{2}$/.test(String(rows[0]?.[k] ?? '')))
