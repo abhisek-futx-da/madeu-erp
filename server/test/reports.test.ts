@@ -8,6 +8,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { inflateRawSync } from 'node:zlib';
 
 const BASE = process.env.API_BASE ?? 'http://127.0.0.1:4000';
 const WEAVER = '33333333-0000-0000-0000-000000000105';
@@ -237,13 +238,26 @@ test('the grouped trial balance agrees with the ledger-wise one', async () => {
 
 test('a ledger for a period opens with a balance and closes on the arithmetic', async () => {
   // Give the weaver a movement this year so the ledger has something to say.
-  const r = await api('/api/grey-inwards', {
+  // A delivery alone no longer touches his ledger — it accrues to received-
+  // not-billed — so it is his *bill* that has to reach him. See
+  // docs/PURCHASE_ACCOUNTING.md.
+  const inward = await api('/api/grey-inwards', {
     method: 'POST',
     body: {
       partyId: WEAVER, entryDate: '2026-09-15',
       challanNo: `LG-${stamp}`, challanDate: '2026-09-15', lotNo: `LG-${stamp}`,
       lines: [{ qualityId: QUALITY_GALAXY, gradeCode: 'LUMP', barcode: `LG${stamp}`,
                 lotNo: `LG-${stamp}`, receivedQty: 100, checkedQty: 100, rate: 20 }]
+    }
+  });
+  assert.equal(inward.status, 201, JSON.stringify(inward.body));
+
+  const r = await api('/api/purchase-invoices', {
+    method: 'POST',
+    body: {
+      partyId: WEAVER, supplierInvoiceNo: `LGSUP-${stamp}`, invoiceDate: '2026-09-15',
+      kind: 'grey', sourceDoc: 'grey_inward', sourceId: inward.body.id,
+      lines: [{ hsnCode: '551311', description: 'Galaxy grey', qty: 100, rate: 20, gstRate: 5 }]
     }
   });
   assert.equal(r.status, 201, JSON.stringify(r.body));
@@ -257,8 +271,8 @@ test('a ledger for a period opens with a balance and closes on the arithmetic', 
   assert.ok(Math.abs((opening + totals.debit - totals.credit) - closing) < 0.005,
     `opening ${opening} + debits ${totals.debit} - credits ${totals.credit} != closing ${closing}`);
 
-  // The 100 x 20 inward above credits the weaver 2,000 inside this window.
-  assert.ok(totals.credit >= 2000, `the inward did not reach the ledger: ${totals.credit}`);
+  // The bill above is 100 x 20 plus 5% GST = 2,100, credited to the weaver.
+  assert.ok(totals.credit >= 2100, `the weaver's bill did not reach his ledger: ${totals.credit}`);
 });
 
 test('a period ledger carries the earlier balance forward rather than starting at zero', async () => {
@@ -342,4 +356,96 @@ test('a ledger prints too, showing its opening and closing on the page', async (
 test('an unknown report is a 404, not an empty answer that looks like good news', async () => {
   const r = await api('/api/reports/profit-per-employee');
   assert.equal(r.status, 404);
+});
+
+// ------------------------------------------------------------------ xlsx --
+
+/** Reads one file out of a zip, so the test checks the real thing. */
+function unzip(buffer: Buffer, wanted: string): string {
+  let at = 0;
+  while (at < buffer.length - 4) {
+    if (buffer.readUInt32LE(at) !== 0x04034b50) break;
+    const method = buffer.readUInt16LE(at + 8);
+    const compressed = buffer.readUInt32LE(at + 18);
+    const nameLen = buffer.readUInt16LE(at + 26);
+    const extraLen = buffer.readUInt16LE(at + 28);
+    const name = buffer.subarray(at + 30, at + 30 + nameLen).toString('utf8');
+    const start = at + 30 + nameLen + extraLen;
+    const body = buffer.subarray(start, start + compressed);
+    if (name === wanted) {
+      return (method === 8 ? inflateRawSync(body) : body).toString('utf8');
+    }
+    at = start + compressed;
+  }
+  throw new Error(`${wanted} is not in the workbook`);
+}
+
+async function download(path: string): Promise<Buffer> {
+  const res = await fetch(`${BASE}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(res.status, 200, path);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+test('a report opens in Excel as a real workbook', async () => {
+  const book = await download(
+    '/api/reports/sales-register?format=xlsx&from=2026-04-01&to=2027-03-31' +
+    '&columns=invoice_date,invoice_no,party,party_gstin,taxable_value,invoice_total');
+
+  // A zip, and one Excel actually accepts: the parts it demands are present.
+  assert.equal(book.readUInt32LE(0), 0x04034b50, 'not a zip');
+  const sheet = unzip(book, 'xl/worksheets/sheet1.xml');
+  assert.ok(unzip(book, '[Content_Types].xml').includes('spreadsheetml.sheet.main'));
+  assert.ok(unzip(book, 'xl/workbook.xml').includes('<sheet name='));
+  assert.ok(sheet.includes('<sheetData>'));
+});
+
+test('the spreadsheet carries types, which is the whole reason it is not a CSV', async () => {
+  const book = await download(
+    '/api/reports/sales-register?format=xlsx&from=2026-04-01&to=2027-03-31' +
+    '&columns=invoice_date,invoice_no,party_gstin,taxable_value');
+  const sheet = unzip(book, 'xl/worksheets/sheet1.xml');
+  if (!sheet.includes('<row r="2">')) return;
+
+  // Money is a number Excel will sum, not text it refuses to add up.
+  assert.match(sheet, /<c r="D2"><v>[\d.]+<\/v><\/c>/,
+    'the money column did not arrive as a number');
+  // A date is a date, not a string Excel re-reads in its own order.
+  assert.match(sheet, /<c r="A2" s="2"><v>\d+<\/v><\/c>/,
+    'the date column did not arrive as a date');
+  // A GSTIN stays exactly as written; this is what CSV gets wrong.
+  assert.ok(sheet.includes('t="inlineStr"'), 'text columns were not written as text');
+  const gstin = /<c r="C2" t="inlineStr"><is><t[^>]*>([^<]*)</.exec(sheet);
+  if (gstin) assert.match(gstin[1]!, /^[0-9]{2}[A-Z]/, `GSTIN came back mangled: ${gstin[1]}`);
+});
+
+test('the header row is frozen and filterable, so a long register is usable', async () => {
+  const book = await download('/api/reports/party-balance?format=xlsx&columns=code,name,balance');
+  const sheet = unzip(book, 'xl/worksheets/sheet1.xml');
+  assert.match(sheet, /<pane ySplit="1"[^>]*state="frozen"\/>/);
+  assert.match(sheet, /<autoFilter ref="A1:C\d+"\/>/);
+});
+
+test('a ledger downloads as a workbook too', async () => {
+  const book = await download(
+    `/api/ledger?ledgerId=${WEAVER}&from=2026-04-01&to=2027-03-31&format=xlsx`);
+  assert.equal(book.readUInt32LE(0), 0x04034b50);
+  assert.ok(unzip(book, 'xl/worksheets/sheet1.xml').includes('<sheetData>'));
+});
+
+test('the registers say who brokered the trade', async () => {
+  const cat = await api('/api/report-catalogue');
+  const by = new Map<string, any>(cat.body.map((x: any) => [x.name, x]));
+  assert.ok(by.get('sales-register').totals.includes('brokerage_amount'));
+
+  const sales = await api('/api/reports/sales-register?limit=50');
+  assert.equal(sales.status, 200, JSON.stringify(sales.body));
+  if (sales.body.length > 0) {
+    assert.ok('broker' in sales.body[0], 'the sales register cannot name the dalal');
+  }
+
+  const purchases = await api('/api/reports/purchase-register?limit=50');
+  assert.equal(purchases.status, 200, JSON.stringify(purchases.body));
+  if (purchases.body.length > 0) {
+    assert.ok('broker' in purchases.body[0], 'the purchase register cannot name the dalal');
+  }
 });

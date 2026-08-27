@@ -127,14 +127,14 @@ export const REPORTS: Record<string, ReportSpec> = {
   }),
   'sales-register': spec('v_sales_register', 'Sales Register', {
     date: 'invoice_date',
-    search: ['invoice_no', 'party', 'party_code', 'party_gstin', 'voucher_no', 'status'],
+    search: ['invoice_no', 'party', 'party_code', 'party_gstin', 'voucher_no', 'status', 'broker'],
     order: 'invoice_date, invoice_no',
     numeric: ['taxable_value', 'cgst_amount', 'sgst_amount', 'igst_amount',
-              'tax_amount', 'round_off', 'invoice_total']
+              'tax_amount', 'round_off', 'invoice_total', 'brokerage_amount']
   }),
   'purchase-register': spec('v_purchase_register', 'Purchase Register', {
     date: 'invoice_date',
-    search: ['our_ref', 'supplier_invoice_no', 'party', 'party_code', 'party_gstin', 'status'],
+    search: ['our_ref', 'supplier_invoice_no', 'party', 'party_code', 'party_gstin', 'status', 'broker'],
     order: 'invoice_date, our_ref',
     numeric: ['taxable_value', 'cgst_amount', 'sgst_amount', 'igst_amount',
               'tax_amount', 'round_off', 'invoice_total']
