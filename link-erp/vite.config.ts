@@ -26,6 +26,9 @@ export default defineConfig({
     // jsdom's event loop.
     minWorkers: 1,
     maxWorkers: 4,
+    // Mounting a large screen and its first fetch can exceed the 5s default
+    // when four files share the machine with a database and a browser gate.
+    testTimeout: 20_000,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}']
   }

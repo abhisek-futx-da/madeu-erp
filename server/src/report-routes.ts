@@ -9,6 +9,8 @@ import { REPORTS, reportCatalogue, reportRows, reportTotals } from './reporting.
 import { renderReportPdf, renderLedgerConfirmationPdf } from './pdf.ts';
 import { renderXlsx } from './xlsx.ts';
 import { postVoucher } from './payments.ts';
+import { DOC_TYPES, queueDocumentEmail, type DocType } from './document-email.ts';
+import { isConfigured as emailConfigured } from './smtp.ts';
 import type { Ctx } from './domain.ts';
 
 const uuid = z.string().uuid();
@@ -297,6 +299,66 @@ export function operationalReportRouter() {
       res.setHeader('content-type', 'application/pdf');
       res.setHeader('content-disposition', `attachment; filename="${stem}.pdf"`);
       res.send(pdf);
+    } catch (e) { next(e); }
+  });
+
+  // -------------------------------------------------------------- email --
+
+  /**
+   * Puts a document in the outbox. It is not sent here: a mail server that is
+   * slow or down must not be able to fail the request that made the document,
+   * and an unconfigured mill gets an outbox that fills and says so rather than
+   * a queue that drains into nowhere.
+   */
+  router.post('/documents/:docType/:id/email', requireWrite('sales'), async (req, res, next) => {
+    try {
+      const docType = z.enum(DOC_TYPES as [DocType, ...DocType[]]).parse(req.params.docType);
+      const id = uuid.parse(req.params.id);
+      const body = z.object({
+        toEmail: z.string().email().max(200).nullish(),
+        ccEmail: z.string().email().max(200).nullish(),
+        note: z.string().max(1000).default('')
+      }).parse(req.body ?? {});
+
+      const out = await withCtx(req, ctx =>
+        queueDocumentEmail(ctx, { docType, docId: id, ...body }));
+      res.status(201).json({
+        ...out,
+        message: out.deliverable
+          ? 'Queued. It will go out on the next delivery run.'
+          : 'Queued, but email is not configured on this server — set SMTP_HOST, ' +
+            'SMTP_USER, SMTP_PASS and SMTP_FROM and it will go out then. Nothing was sent.'
+      });
+    } catch (e) { next(e); }
+  });
+
+  listRoute('/document-emails', 'document-emails', {
+    from: 'v_document_email e',
+    select: `e.id, e.doc_type, e.doc_id, e.to_email, e.to_name, e.subject,
+             e.attachment_name, e.state, e.attempts, e.last_error,
+             e.created_at, e.sent_at, e.queued_by`,
+    search: ['e.to_email', 'e.to_name', 'e.subject', 'e.state', 'e.doc_type'],
+    dateColumn: 'e.created_at',
+    orderBy: 'e.created_at desc'
+  });
+
+  /** Whether email can go out at all, and what is waiting if it cannot. */
+  router.get('/document-emails/health', async (req, res, next) => {
+    try {
+      const { tenantId, userId } = req.session!;
+      const queue = await withTenant(tenantId, userId, db =>
+        one<Record<string, unknown>>(db, 'select * from v_email_queue_health'));
+      res.json({
+        configured: emailConfigured(),
+        // Named plainly so an operator knows it is a setup step, not a fault.
+        setUp: emailConfigured()
+          ? null
+          : 'SMTP_HOST, SMTP_USER, SMTP_PASS and SMTP_FROM are not set on the server',
+        pending: Number(queue?.pending ?? 0),
+        failed: Number(queue?.failed ?? 0),
+        sent: Number(queue?.sent ?? 0),
+        oldestWaiting: queue?.oldest_waiting ?? null
+      });
     } catch (e) { next(e); }
   });
 
