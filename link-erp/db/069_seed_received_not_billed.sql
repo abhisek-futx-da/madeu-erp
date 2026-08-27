@@ -3,6 +3,11 @@
 -- made through the API get theirs from the bootstrap transaction. This covers
 -- the demo tenant, and is the same statements written to be safe to re-run.
 
+-- Self-sufficient: the upgrade rehearsal runs the seed pass before it applies
+-- the deferred migrations, so this cannot assume 068 has been through yet.
+alter type posting_role add value if not exists 'grey_not_billed';
+alter type posting_role add value if not exists 'jobwork_not_billed';
+
 insert into control_account (tenant_id, code, name, sub_control, nature)
 select id, '11', 'Received Not Billed', 'Current Liabilities', 'current_liability'
   from tenant
