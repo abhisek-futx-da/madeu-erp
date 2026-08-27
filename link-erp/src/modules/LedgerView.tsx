@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { useApi } from '../lib/useApi';
 import { api } from '../lib/api';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, FileSignature } from 'lucide-react';
 
 /**
  * One account over one period, opening balance first. The party statement
@@ -47,7 +47,7 @@ export const LedgerView: React.FC = () => {
     () => `/ledger?ledgerId=${ledgerId}&from=${from}&to=${to}`, [ledgerId, from, to]);
   const { data, error, loading } = useApi<Statement>(ready ? query : null);
 
-  const take = async (format: 'csv' | 'pdf') => {
+  const take = async (format: 'csv' | 'pdf' | 'xlsx') => {
     if (!ready) return;
     setMessage(`Preparing the ${format.toUpperCase()}…`);
     try {
@@ -55,6 +55,20 @@ export const LedgerView: React.FC = () => {
       setMessage(`${format.toUpperCase()} downloaded`);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'the export failed');
+    }
+  };
+
+  /** The same account, laid out for the party to sign the balance back. */
+  const confirmation = async () => {
+    if (!ready) return;
+    setMessage('Preparing the confirmation letter…');
+    try {
+      await api.download(
+        `/ledger-confirmation?ledgerId=${ledgerId}&from=${from}&to=${to}&format=pdf`,
+        `ledger-confirmation-${from}-to-${to}`);
+      setMessage('Confirmation letter downloaded — send it and ask for it back signed');
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'the letter could not be prepared');
     }
   };
 
@@ -88,6 +102,12 @@ export const LedgerView: React.FC = () => {
             The closing date falls before the opening date.
           </span>
         )}
+        <button className="erp-btn min-h-11" disabled={!ready}
+          onClick={() => void confirmation()}>
+          <FileSignature className="h-4 w-4 text-blue-700" />Confirmation letter
+        </button>
+        <button className="erp-btn min-h-11" disabled={!ready}
+          onClick={() => void take('xlsx')}>Excel</button>
         {message && <span role="status" className="font-semibold text-emerald-800">{message}</span>}
       </div>
 

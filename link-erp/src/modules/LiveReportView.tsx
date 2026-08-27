@@ -386,6 +386,47 @@ export const REPORTS: Record<string, ReportSpec> = {
       { key: 'balance', label: 'Balance', align: 'right', format: money }
     ]
   },
+  order_lines: {
+    title: 'Order Lines With Specification',
+    path: '/reports/order-lines',
+    columns: [
+      { key: 'side', label: 'Side' },
+      { key: 'order_date', label: 'Date' },
+      { key: 'order_no', label: 'Order' },
+      { key: 'party_ref', label: 'Their Ref' },
+      { key: 'party', label: 'Party' },
+      { key: 'quality', label: 'Quality' },
+      { key: 'design', label: 'Design' },
+      { key: 'construction', label: 'Construction' },
+      { key: 'selvedge_line', label: 'Selvedge' },
+      { key: 'width_cms', label: 'Panna (cm)', align: 'right' },
+      { key: 'grade_code', label: 'Grade' },
+      { key: 'less_type', label: 'Less' },
+      { key: 'less_value', label: 'Less Qty', align: 'right', format: num },
+      { key: 'pcs', label: 'Pcs', align: 'right' },
+      { key: 'cut_length', label: 'Cut', align: 'right', format: num },
+      { key: 'qty', label: 'Qty', align: 'right', format: num },
+      { key: 'rate', label: 'Rate', align: 'right', format: num },
+      { key: 'amount', label: 'Amount', align: 'right', format: money },
+      { key: 'balance_qty', label: 'Balance', align: 'right', format: num }
+    ]
+  },
+  cash_and_bank_book: {
+    title: 'Cash & Bank Book — every rupee in and out, transfers included',
+    path: '/reports/cash-and-bank-book',
+    columns: [
+      { key: 'entry_date', label: 'Date' },
+      { key: 'voucher_no', label: 'Voucher' },
+      { key: 'kind', label: 'Kind' },
+      { key: 'mode', label: 'Mode' },
+      { key: 'account', label: 'Account' },
+      { key: 'party', label: 'Party / Other Side' },
+      { key: 'instrument_no', label: 'Reference' },
+      { key: 'inflow', label: 'In', align: 'right', format: money },
+      { key: 'outflow', label: 'Out', align: 'right', format: money },
+      { key: 'narration', label: 'Narration' }
+    ]
+  },
   sales_register: {
     title: 'Sales Register — every bill raised, in date order',
     path: '/reports/sales-register',
@@ -452,8 +493,9 @@ export const REPORTS: Record<string, ReportSpec> = {
   }
 };
 
-interface Catalogue { name: string; hasPeriod: boolean; totals: string[] }
-interface Summary { total: number; totals: Record<string, number> }
+interface Catalogue { name: string; hasPeriod: boolean; totals: string[]; groupBy: string | null }
+interface Group { label: string; rows: number; totals: Record<string, number> }
+interface Summary { total: number; totals: Record<string, number>; groups?: Group[] }
 
 const PAGE = 200;
 
@@ -474,7 +516,9 @@ export const LiveReportView: React.FC<{
   const [selectedView,setSelectedView]=useState('');
   const [message,setMessage]=useState('');
   const catalogue = useApi<Catalogue[]>('/report-catalogue');
-  const period = (catalogue.data ?? []).find(entry => entry.name === reportName)?.hasPeriod ?? false;
+  const meta = (catalogue.data ?? []).find(entry => entry.name === reportName);
+  const period = meta?.hasPeriod ?? false;
+  const groupBy = meta?.groupBy ?? null;
 
   /**
    * The search is a server query, not a pass over what is already on screen:
@@ -505,6 +549,8 @@ export const LiveReportView: React.FC<{
   const rows = data ?? [];
   const total = summary.data?.total ?? rows.length;
   const totals = summary.data?.totals ?? {};
+  /** "TOTAL OF Bombay Crimpers Pvt. Ltd." — subtotals over the whole report. */
+  const groups = new Map((summary.data?.groups ?? []).map(g => [g.label, g] as const));
   const next = emptyStep(report);
   const columns=useMemo(()=>spec.columns.filter(column=>visible.includes(column.key)),[spec.columns,visible]);
   const applyView=(id:string)=>{setSelectedView(id);const view=(saved.data??[]).find(row=>row.id===id);if(!view)return;setFilter(view.filter_text);const allowed=view.columns.filter(key=>spec.columns.some(column=>column.key===key));setVisible(allowed.length?allowed:spec.columns.map(column=>column.key));setViewName(view.name);setMessage(`Loaded ${view.name}`);};
@@ -596,16 +642,37 @@ export const LiveReportView: React.FC<{
                 )}
               </td></tr>
             )}
-            {rows.map((row, i) => (
-              <tr key={i} className="border-b border-slate-100 hover:bg-blue-50/40">
-                {columns.map(c => (
-                  <td key={c.key}
-                      className={`px-2 py-1 ${c.align === 'right' ? 'text-right font-mono' : ''}`}>
-                    {c.format ? c.format(row[c.key]) : String(row[c.key] ?? '')}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {rows.map((row, i) => {
+              // A subtotal closes each break, the way a mill's own reports read.
+              const label = groupBy ? String(row[groupBy] ?? '(none)') : null;
+              const last = groupBy && (i === rows.length - 1
+                || String(rows[i + 1]?.[groupBy] ?? '(none)') !== label);
+              const group = last && label !== null ? groups.get(label) : undefined;
+              return (
+                <React.Fragment key={i}>
+                  <tr className="border-b border-slate-100 hover:bg-blue-50/40">
+                    {columns.map(c => (
+                      <td key={c.key}
+                          className={`px-2 py-1 ${c.align === 'right' ? 'text-right font-mono' : ''}`}>
+                        {c.format ? c.format(row[c.key]) : String(row[c.key] ?? '')}
+                      </td>
+                    ))}
+                  </tr>
+                  {group && (
+                    <tr className="border-y border-slate-300 bg-slate-50 font-bold">
+                      {columns.map((c, at) => (
+                        <td key={c.key}
+                            className={`px-2 py-1 ${c.align === 'right' ? 'text-right font-mono' : ''}`}>
+                          {at === 0 ? `TOTAL OF ${label}`
+                            : c.key in group.totals
+                              ? (c.format ?? num)(group.totals[c.key]) : ''}
+                        </td>
+                      ))}
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
           {rows.length > 0 && Object.keys(totals).length > 0 && (
             /* The footer totals the whole report under these filters. Adding up

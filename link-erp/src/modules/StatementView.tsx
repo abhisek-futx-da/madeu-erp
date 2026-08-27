@@ -4,8 +4,16 @@ import { useApi } from '../lib/useApi';
 import { api } from '../lib/api';
 
 /**
- * Profit & loss and balance sheet. The system had a trial balance and nothing
- * an owner or a CA could read off it directly.
+ * The three statements an Indian accountant reads, in the order they are read.
+ *
+ * Trading first — opening stock, purchases and direct costs against sales and
+ * closing stock, balancing to Gross Profit. Then the P&L, which takes that
+ * gross profit against indirect income and expenses to reach Net Profit. The
+ * Balance Sheet stands on its own.
+ *
+ * Each reads ledger by ledger or head by head, because an accountant checking
+ * a figure and an owner reading the shape of the year want different things
+ * from the same numbers.
  */
 
 interface Line {
@@ -13,6 +21,16 @@ interface Line {
   code: string; name: string; control_account: string; amount: number;
 }
 interface PL { from: string; to: string; rows: Line[]; totals: { income: number; expense: number; netProfit: number } }
+interface Trading {
+  from: string; to: string; debit: Line[]; credit: Line[];
+  totals: {
+    openingStock: number; purchases: number; closingStock: number;
+    sales: number; costOfGoodsSold: number; otherDirectExpenses: number;
+    grossProfit: number; grossProfitPct: number;
+    debitTotal: number; creditTotal: number;
+    stockAdjustments: number; difference: number;
+  };
+}
 interface BS {
   asOn: string; rows: Line[];
   totals: { assets: number; liabilities: number; equity: number; difference: number };
@@ -63,22 +81,82 @@ const Column: React.FC<{ title: string; rows: Line[]; total: number }> = ({ titl
   </div>
 );
 
-export const StatementView: React.FC<{ kind: 'profit_loss' | 'balance_sheet' }> = ({ kind }) => {
+/**
+ * The two sides of a Trading Account, and the gross profit that balances it.
+ *
+ * `difference` is the same gross profit reached the other way — sales less
+ * cost of goods sold and direct expenses. It should be nothing. When it is
+ * not, the stock ledger and the P&L ledgers disagree, and that is a posting
+ * defect the reader has to be told about rather than shown a tidy total.
+ */
+const TradingAccount: React.FC<{ data: Trading | null }> = ({ data }) => {
+  if (!data) return <p className="p-8 text-center text-slate-600">Loading…</p>;
+  const t = data.totals;
+  const profit = t.grossProfit >= 0;
+
+  return (
+    <>
+      <div className="flex flex-col gap-6 md:flex-row">
+        <Column title="Dr" rows={data.debit} total={t.debitTotal - Math.max(t.grossProfit, 0)} />
+        <Column title="Cr" rows={data.credit} total={t.creditTotal} />
+      </div>
+
+      <div className={`mt-4 rounded border p-3 text-center text-sm font-bold ${
+        profit ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+               : 'bg-red-50 border-red-300 text-red-900'}`}>
+        {profit ? 'Gross Profit' : 'Gross Loss'} c/d: {money(Math.abs(t.grossProfit))}
+        {t.sales > 0 && <span className="ml-2 font-normal">({t.grossProfitPct.toFixed(2)}% of sales)</span>}
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 text-slate-700 sm:grid-cols-4">
+        <div><span className="text-slate-600">Opening stock</span>
+          <p className="font-mono font-bold">{money(t.openingStock)}</p></div>
+        <div><span className="text-slate-600">Purchases and processing</span>
+          <p className="font-mono font-bold">{money(t.purchases)}</p></div>
+        <div><span className="text-slate-600">Cost of goods sold</span>
+          <p className="font-mono font-bold">{money(t.costOfGoodsSold)}</p></div>
+        <div><span className="text-slate-600">Closing stock</span>
+          <p className="font-mono font-bold">{money(t.closingStock)}</p></div>
+      </div>
+
+      {Math.abs(t.stockAdjustments) > 0.01 && (
+        <p className="mt-2 text-slate-600">
+          Of what left stock, {money(Math.abs(t.stockAdjustments))} went out other than by
+          sale — write-off or shortage.
+        </p>
+      )}
+
+      {Math.abs(t.difference) > 0.01 && (
+        <div className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-center font-bold text-red-900">
+          Gross profit differs by {money(t.difference)} depending how it is computed —
+          the stock ledger and the trading ledgers disagree, and the books need attention.
+        </div>
+      )}
+    </>
+  );
+};
+
+export const StatementView: React.FC<{
+  kind: 'trading' | 'profit_loss' | 'balance_sheet';
+}> = ({ kind }) => {
   const today = new Date().toISOString().slice(0, 10);
   const [from, setFrom] = useState(fyStart(today));
   const [to, setTo] = useState(today);
+  const [view, setView] = useState<'details' | 'summary'>('details');
 
-  const path = kind === 'profit_loss'
-    ? `/statements/profit-loss?from=${from}&to=${to}`
-    : `/statements/balance-sheet?to=${to}`;
-  const { data, error, loading, reload } = useApi<PL & BS>(path);
+  const path = kind === 'balance_sheet'
+    ? `/statements/balance-sheet?to=${to}&view=${view}`
+    : `/statements/${kind === 'trading' ? 'trading' : 'profit-loss'}` +
+      `?from=${from}&to=${to}&view=${view}`;
+  const { data, error, loading, reload } = useApi<PL & BS & Trading>(path);
 
   const rows = data?.rows ?? [];
   const of = (s: Line['section']) => rows.filter(r => r.section === s);
   const sum = (s: Line['section']) =>
     of(s).reduce((n, r) => n + Number(r.amount), 0);
 
-  const title = kind === 'profit_loss' ? 'Profit & Loss' : 'Balance Sheet';
+  const title = kind === 'trading' ? 'Trading Account'
+    : kind === 'profit_loss' ? 'Profit & Loss' : 'Balance Sheet';
   const exportCsv = () => api.download(`${path}${path.includes('?') ? '&' : '?'}format=csv`, title);
 
   return (
@@ -93,16 +171,25 @@ export const StatementView: React.FC<{ kind: 'profit_loss' | 'balance_sheet' }> 
       />
 
       <div className="flex items-center gap-3 px-3 py-2 bg-slate-50 border-b border-slate-200 print:hidden">
-        {kind === 'profit_loss' && (
+        {kind !== 'balance_sheet' && (
           <label className="flex items-center gap-1">
-            From <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+            From <input type="date" aria-label="From date" value={from}
+              onChange={e => setFrom(e.target.value)}
               className="border border-slate-300 rounded px-1 py-1" />
           </label>
         )}
         <label className="flex items-center gap-1">
-          {kind === 'profit_loss' ? 'To' : 'As on'}
-          <input type="date" value={to} onChange={e => setTo(e.target.value)}
+          {kind === 'balance_sheet' ? 'As on' : 'To'}
+          <input type="date" aria-label={kind === 'balance_sheet' ? 'As on date' : 'To date'}
+            value={to} onChange={e => setTo(e.target.value)}
             className="border border-slate-300 rounded px-1 py-1" />
+        </label>
+        <label className="flex items-center gap-1">View
+          <select aria-label="View" className="erp-input min-h-11"
+            value={view} onChange={e => setView(e.target.value as 'details' | 'summary')}>
+            <option value="details">In details</option>
+            <option value="summary">In summary</option>
+          </select>
         </label>
         {loading && <span className="text-slate-500">Loading…</span>}
       </div>
@@ -113,10 +200,10 @@ export const StatementView: React.FC<{ kind: 'profit_loss' | 'balance_sheet' }> 
         <div className="bg-white rounded border border-[#b8c9dd] p-3">
           <h2 className="text-center font-bold text-blue-900 text-sm mb-1">{title}</h2>
           <p className="text-center text-slate-500 mb-3">
-            {kind === 'profit_loss' ? `${from} to ${to}` : `as on ${to}`}
+            {kind === 'balance_sheet' ? `as on ${to}` : `${from} to ${to}`}
           </p>
 
-          {kind === 'profit_loss' ? (
+          {kind === 'trading' ? <TradingAccount data={data} /> : kind === 'profit_loss' ? (
             <>
               <div className="flex gap-6 flex-col md:flex-row">
                 <Column title="Expenditure" rows={of('expense')} total={sum('expense')} />

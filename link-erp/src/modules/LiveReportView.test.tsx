@@ -143,3 +143,49 @@ describe('LiveReportView', () => {
       asked.some(u => u.includes('from=2026-04-01') && u.includes('to=2026-06-30'))).toBe(true));
   });
 });
+
+describe('group subtotals', () => {
+  const ROWS = [
+    { party: 'Bombay Crimpers', invoice_no: 'INV-1', invoice_total: 100 },
+    { party: 'Bombay Crimpers', invoice_no: 'INV-2', invoice_total: 250 },
+    { party: 'Prayag Texprint', invoice_no: 'INV-3', invoice_total: 400 }
+  ];
+
+  function mockGrouped() {
+    clearApiCache();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const path = String(url).replace(/^.*\/api/, '').split('?')[0]!;
+      const body = path === '/report-catalogue'
+        ? [{ name: 'sales-register', hasPeriod: true, totals: ['invoice_total'], groupBy: 'party' }]
+        : path.endsWith('/summary')
+          ? {
+              total: 3, totals: { invoice_total: 750 },
+              groups: [
+                { label: 'Bombay Crimpers', rows: 2, totals: { invoice_total: 350 } },
+                { label: 'Prayag Texprint', rows: 1, totals: { invoice_total: 400 } }
+              ]
+            }
+          : path.startsWith('/reports/') ? ROWS : [];
+      return { ok: true, status: 200, headers: new Headers(),
+               text: async () => JSON.stringify(body) } as Response;
+    }));
+  }
+
+  test('a subtotal closes each party, the way a mill reads a register', async () => {
+    mockGrouped();
+    render(<LiveReportView report="sales_register" />);
+
+    expect(await screen.findByText('TOTAL OF Bombay Crimpers')).toBeInTheDocument();
+    expect(screen.getByText('TOTAL OF Prayag Texprint')).toBeInTheDocument();
+  });
+
+  test('the subtotals add up to the report total', async () => {
+    mockGrouped();
+    render(<LiveReportView report="sales_register" />);
+
+    const first = (await screen.findByText('TOTAL OF Bombay Crimpers')).closest('tr')!;
+    expect(first.textContent).toContain('350');
+    // 350 + 400 = 750, which is what the footer says.
+    expect(screen.getByText(/Total \(3 rows\)/).closest('tr')!.textContent).toContain('750');
+  });
+});
