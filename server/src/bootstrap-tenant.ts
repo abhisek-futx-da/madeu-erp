@@ -64,6 +64,7 @@ const CONTROL_ACCOUNTS: ControlSpec[] = [
   { code: '15', name: 'Current Assets - Stock', subControl: 'Inventory', nature: 'current_asset' },
   { code: '16', name: 'Bank Accounts', subControl: 'Bank', nature: 'bank' },
   { code: '17', name: 'Cash in Hand', subControl: 'Cash', nature: 'cash' },
+  { code: '11', name: 'Received Not Billed', subControl: 'Current Liabilities', nature: 'current_liability' },
   { code: '18', name: 'Current Tax Assets', subControl: 'Current Assets', nature: 'current_asset' },
   { code: '20', name: 'Creditors for Transport', subControl: 'Sundry Creditors', nature: 'sundry_creditor_transport' },
   { code: '30', name: 'Creditors for Process', subControl: 'Sundry Creditors', nature: 'sundry_creditor_process' },
@@ -90,6 +91,10 @@ const LEDGERS: LedgerSpec[] = [
   { code: '900', name: 'Trading Purchase A/c', controlCode: '90', postingRole: 'purchase_grey' },
   { code: '901', name: 'Trading Sales A/c', controlCode: '91', postingRole: 'sales_finish' },
   { code: '903', name: 'Dyeing & Processing Charges', controlCode: '90', postingRole: 'purchase_jobwork' },
+  // Goods and services taken in but not yet billed. The receipt accrues here;
+  // the supplier's own bill clears it and credits him.
+  { code: '991', name: 'Grey Received — Not Yet Billed', controlCode: '11', postingRole: 'grey_not_billed' },
+  { code: '992', name: 'Job Work Done — Not Yet Billed', controlCode: '11', postingRole: 'jobwork_not_billed' },
   { code: '910', name: 'Output CGST', controlCode: '81', postingRole: 'cgst_output' },
   { code: '911', name: 'Output SGST', controlCode: '81', postingRole: 'sgst_output' },
   { code: '912', name: 'Output IGST', controlCode: '81', postingRole: 'igst_output' },

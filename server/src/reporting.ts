@@ -113,6 +113,18 @@ export const REPORTS: Record<string, ReportSpec> = {
   }),
 
   // ---------------------------------------------------------------- accounts --
+  'unbilled-receipts': spec('v_unbilled_receipts', 'Received But Not Billed', {
+    date: 'entry_date',
+    search: ['entry_no', 'challan_no', 'party', 'party_code', 'kind'],
+    order: 'entry_date, entry_no',
+    numeric: ['received_value', 'billed_value', 'unbilled_value']
+  }),
+  'double-booked-purchases': spec('v_double_booked_purchases', 'Bills Booked Twice (Before The Fix)', {
+    date: 'invoice_date',
+    search: ['our_ref', 'supplier_invoice_no', 'party', 'voucher_no'],
+    order: 'invoice_date, our_ref',
+    numeric: ['billed_twice_value']
+  }),
   'sales-register': spec('v_sales_register', 'Sales Register', {
     date: 'invoice_date',
     search: ['invoice_no', 'party', 'party_code', 'party_gstin', 'voucher_no', 'status'],

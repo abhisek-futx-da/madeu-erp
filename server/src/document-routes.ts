@@ -572,6 +572,10 @@ export function documentRouter() {
         invoiceDate: isoDate,
         kind: z.enum(['grey', 'jobwork']).default('grey'),
         itcEligible: z.boolean().default(true),
+        // The delivery this bill settles. Without it the bill is a fresh
+        // purchase; with it, it clears what that receipt already accrued.
+        sourceDoc: z.enum(['grey_inward', 'dyeing_receipt']).nullish(),
+        sourceId: uuid.nullish(),
         lines: z.array(z.object({
           hsnCode: z.string().min(4).max(10),
           description: z.string().min(1).max(200),

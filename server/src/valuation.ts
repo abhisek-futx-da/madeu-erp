@@ -26,7 +26,14 @@ export async function roleLedgers(db: Db) {
   };
 }
 
-/** Grey arriving: capitalise it against the piece and the inventory account. */
+/**
+ * Grey arriving: capitalise it against the piece and the inventory account.
+ *
+ * The credit goes to the received-not-billed clearing account, not to the
+ * weaver. Crediting him here and again when his bill arrives charged the mill
+ * twice for one delivery; the bill now clears this accrual instead.
+ * `partyId` is retained for the audit trail on the voucher, not for posting.
+ */
 export async function capitaliseGrey(
   ctx: Ctx,
   inwardId: string,
@@ -51,12 +58,16 @@ export async function capitaliseGrey(
     `Grey inward ${entryNo}`, 'grey_inward', inwardId,
     [
       { ledgerId: led.need('inventory_grey'), debit: total },
-      { ledgerId: partyId, credit: total }
+      { ledgerId: led.need('grey_not_billed'), credit: total }
     ]
   );
 }
 
-/** Jobwork adds to what the piece is worth and moves it to finish stock. */
+/**
+ * Jobwork adds to what the piece is worth and moves it to finish stock. The
+ * processing charge accrues to received-not-billed for the same reason grey
+ * does: the process house's own bill is what credits the process house.
+ */
 export async function capitaliseJobwork(
   ctx: Ctx,
   receiptId: string,
@@ -91,7 +102,7 @@ export async function capitaliseJobwork(
     [
       { ledgerId: led.need('inventory_finish'), debit: round2(grey + jobwork) },
       { ledgerId: led.need('inventory_grey'), credit: grey },
-      { ledgerId: processHouseId, credit: jobwork }
+      { ledgerId: led.need('jobwork_not_billed'), credit: jobwork }
     ]
   );
 }

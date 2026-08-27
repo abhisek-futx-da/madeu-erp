@@ -43,7 +43,8 @@ test('a real-mill bootstrap creates only the neutral, usable company foundation'
     pilotOwnerId = result.ownerId;
     assert.equal(result.financialYear, '2026-27');
     assert.equal(result.ownerEmail, input.ownerEmail);
-    assert.equal(result.systemLedgers, 27);
+    // 29 since the two received-not-billed clearing accounts joined the chart.
+    assert.equal(result.systemLedgers, 29);
 
     const tenant = await db.query<{
       legal_name: string; gstin: string; pan: string; state_code: string; fy_start: string;
@@ -67,7 +68,8 @@ test('a real-mill bootstrap creates only the neutral, usable company foundation'
       [result.tenantId]
     );
     assert.deepEqual(counts.rows[0], {
-      controls: 24, ledgers: 27, roles: 27, units: 4, series: 31,
+      // One control account and two ledgers more since received-not-billed.
+      controls: 25, ledgers: 29, roles: 29, units: 4, series: 31,
       banks: 0, parties: 0, qualities: 0, tds: 0
     });
 
