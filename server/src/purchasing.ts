@@ -23,6 +23,8 @@ async function inputRoles(ctx: Ctx) {
   return {
     purchaseGrey: need('purchase_grey'),
     purchaseJobwork: need('purchase_jobwork'),
+    greyNotBilled: need('grey_not_billed'),
+    jobworkNotBilled: need('jobwork_not_billed'),
     cgstInput: need('cgst_input'),
     sgstInput: need('sgst_input'),
     igstInput: need('igst_input'),
@@ -38,6 +40,39 @@ export interface PurchaseLineInput {
   uom?: string;
   rate: number;
   gstRate: number;
+}
+
+/**
+ * Does this bill settle a delivery already taken into stock?
+ *
+ * The link decides which account is debited, so it is verified rather than
+ * trusted: the document must exist, still be live, and belong to the supplier
+ * being billed. A bill pointing at someone else's delivery would clear an
+ * accrual the supplier never raised.
+ */
+async function settlesReceipt(
+  ctx: Ctx, header: { partyId: string; sourceDoc?: string | null; sourceId?: string | null }
+): Promise<boolean> {
+  const { sourceDoc, sourceId } = header;
+  if (!sourceDoc) return false;
+  if (sourceDoc !== 'grey_inward' && sourceDoc !== 'dyeing_receipt') return false;
+  if (!sourceId) throw new Error(`a bill against a ${sourceDoc} needs that document's id`);
+
+  const partyColumn = sourceDoc === 'grey_inward' ? 'party_id' : 'process_house_id';
+  const found = await one<{ party_id: string; live: boolean; entry_no: string }>(
+    ctx.db,
+    `select ${partyColumn} as party_id, is_live(status) as live, entry_no
+       from ${sourceDoc} where id = $1`,
+    [sourceId]
+  );
+  if (!found) throw new Error(`no ${sourceDoc.replace('_', ' ')} with that id`);
+  if (!found.live) {
+    throw new Error(`${found.entry_no} is not in the books, so there is nothing to bill against`);
+  }
+  if (found.party_id !== header.partyId) {
+    throw new Error(`${found.entry_no} was not received from this supplier`);
+  }
+  return true;
 }
 
 export async function recordPurchaseInvoice(
@@ -151,10 +186,20 @@ export async function recordPurchaseInvoice(
   );
 
   const led = await inputRoles(ctx);
-  const expense = header.kind === 'jobwork' ? led.purchaseJobwork : led.purchaseGrey;
+  /**
+   * A bill raised against a receipt clears what that receipt already accrued;
+   * the goods were costed into stock when they arrived. Only a bill that
+   * stands alone — no inward, no dyeing receipt behind it — is a fresh
+   * purchase expense. Charging both is what credited a weaver twice for one
+   * delivery. See docs/PURCHASE_ACCOUNTING.md.
+   */
+  const clears = await settlesReceipt(ctx, header);
+  const debitLedger = clears
+    ? (header.kind === 'jobwork' ? led.jobworkNotBilled : led.greyNotBilled)
+    : (header.kind === 'jobwork' ? led.purchaseJobwork : led.purchaseGrey);
 
   const postings: { ledgerId: string; debit?: number; credit?: number }[] = [
-    { ledgerId: expense, debit: computed.taxableValue }
+    { ledgerId: debitLedger, debit: computed.taxableValue }
   ];
   if (computed.cgstAmount > 0) postings.push({ ledgerId: led.cgstInput, debit: computed.cgstAmount });
   if (computed.sgstAmount > 0) postings.push({ ledgerId: led.sgstInput, debit: computed.sgstAmount });

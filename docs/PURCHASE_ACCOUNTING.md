@@ -1,90 +1,78 @@
-# How a grey purchase is booked — an open decision
+# How a receipt and its bill are booked
 
-**Status: a defect is reproduced and unfixed. Read this before trusting any
-purchase figure, creditor balance, or gross margin.**
+**Status: fixed by migration 068 on 2026-08-27.** This page records what was
+wrong, what replaced it, and what a mill with older books still has to do.
 
-## What happens today
+## What was wrong
 
-Two independent paths credit the supplier for the same goods, and nothing links
-or reconciles them.
+Two independent paths credited the supplier for the same delivery, and nothing
+linked or reconciled them.
 
 | Event | Posting |
 |---|---|
-| Grey inward (`capitaliseGrey`) | Dr Grey Stock **30,500** / Cr Weaver **30,500** |
+| Grey inward | Dr Grey Stock **30,500** / Cr Weaver **30,500** |
 | Purchase invoice, kind `grey` | Dr Trading Purchase **30,500** + Dr GST Input **1,525** / Cr Weaver **32,025** |
 
-For one delivery of 1,000 mtr at ₹30.50 the weaver ends up credited
-**₹62,525** against goods worth ₹32,025 including GST, and the same cost sits
-in **Grey Stock (an asset)** and **Trading Purchase (Direct Expenses)** at the
-same time.
+One delivery of 1,000 mtr at ₹30.50 left the weaver credited **₹62,525**
+against goods worth ₹32,025 including GST, and the same cost sat in **Grey
+Stock (an asset)** and **Trading Purchase (Direct Expenses)** at once.
 
-The trial balance still balances, because both sides doubled. That is exactly
-why nothing catches it.
+The trial balance still balanced, because both sides doubled. That is exactly
+why nothing caught it.
 
-Reproduced by `server/test/purchase-double-count.test.ts`, which is skipped
-rather than deleted: it is the evidence, and it should start passing the day
-this is settled.
+The same fault ran through job work, and had not been noticed at all: a dyeing
+receipt credited the process house for the processing, and the process house's
+bill credited it again.
 
-It is reachable through the ordinary interface. Purchase Invoices offers
-"Grey purchase" as its default kind and has no field for linking a bill to an
-inward, so an operator entering the weaver's bill for grey already taken into
-stock will do this without any warning.
+Underneath both was a missing link — the purchase invoice API accepted no
+reference to the delivery it settled, so the system could not have told the
+difference between a bill for goods already received and a fresh purchase.
 
-## Why this is a decision and not a bug fix
+## What it does now
 
-Three coherent designs exist and only the mill can say which matches how it
-actually works.
-
-### A. Goods Received Not Billed — recommended
-
-The inward accrues to a clearing liability instead of the supplier; the bill
-clears it and credits the supplier.
+The receipt accrues to a clearing liability; the bill clears it and credits
+the supplier.
 
 | Event | Posting |
 |---|---|
-| Grey inward | Dr Grey Stock / Cr **Goods Received Not Billed** |
-| Purchase invoice against it | Dr **Goods Received Not Billed** + Dr GST Input / Cr Weaver |
+| Grey inward | Dr Grey Stock / Cr **Grey Received — Not Yet Billed** (991) |
+| Bill against that inward | Dr **991** + Dr GST Input / Cr Weaver |
+| Dyeing receipt | Dr Finish Stock / Cr Grey Stock / Cr **Job Work Done — Not Yet Billed** (992) |
+| Bill against that receipt | Dr **992** + Dr GST Input / Cr Process House |
+| Bill with no receipt behind it | Dr Trading Purchase / Dr GST Input / Cr Supplier — unchanged |
 
-*For:* standard practice, values stock the day it arrives, and the supplier
-ledger shows only what has actually been billed — which is what bill-wise
-outstanding and a ledger confirmation both need. It also yields a genuinely
-useful control: **goods received but not yet billed**, a number a mill owner
-wants every week.
+Stock is still valued the day it arrives. A supplier's ledger now shows only
+what he has actually billed, which is what bill-wise outstanding and a ledger
+confirmation both need.
 
-*Against:* the supplier's balance no longer moves at inward time, so anyone who
-today reconciles payables from the inward will see a different figure. That is
-a workflow change the accountant must agree to.
+`sourceDoc` and `sourceId` on a purchase invoice carry the link. They are
+verified, not trusted: the document must exist, still be live, and belong to
+the supplier being billed. A bill pointing at another supplier's delivery is
+refused, because it would clear an accrual that supplier never raised.
 
-### B. The bill is the only accounting event
+## What it gives the mill
 
-The inward records stock movement with no voucher; the purchase invoice does
-all the accounting.
+**Received But Not Billed** — a report of what is in the godown that nobody
+has invoiced yet, party-wise, with the age of each delivery. The clearing
+ledgers are control totals with no party dimension, so the detail is derived
+from the documents. It is a number an owner wants weekly, and it did not exist
+before.
 
-*Against:* stock has no value until the bill arrives. For a mill whose weavers
-bill late, the balance sheet understates inventory for weeks. Not recommended.
+## Books written before the fix
 
-### C. Never bill an inward
+Vouchers already posted under the old scheme are **not rewritten**. A posted
+document is reversed, never silently edited, and quietly restating history
+would be worse than the original defect.
 
-Grey inward *is* the purchase; purchase invoices are only for jobwork and
-expenses.
+**Bills Booked Twice (Before The Fix)** lists every bill raised against a
+receipt before migration 068 applied. Take it to your accountant: each row is
+a journal entry to pass, debiting the supplier and crediting Trading Purchase
+or Dyeing & Processing Charges by the taxable value shown. The report is
+empty for a mill that starts on 068 or later.
 
-*Against:* contradicts the interface, which offers "Grey purchase" first. If
-this is genuinely the intent, the fix is to remove that option and block a
-`kind: 'grey'` bill against a party who has open inwards — not to leave both
-paths open and hope.
+## Held by
 
-## What is blocked until this is settled
-
-- **Trading Account and Gross Profit.** Building them now would compute a
-  confident, precise, wrong number: purchases appear twice, once as an asset
-  and once as a direct expense.
-- Any creditor ageing, ledger confirmation or supplier reconciliation.
-- Any margin figure that a CA would sign.
-
-## The question for the mill
-
-> When your weaver's bill arrives for grey you have already taken into stock
-> and barcoded, do you enter it as a purchase invoice as well — and if so, what
-> does your current system do to the weaver's balance?
-
-The answer decides A or C in one sentence.
+`server/test/purchase-double-count.test.ts` — six tests covering the accrual,
+the bill that clears it, the bill that stands alone, the bill pinned to the
+wrong supplier, and the unbilled report. It was a skipped reproduction of the
+defect; it is now the thing that stops it coming back.
