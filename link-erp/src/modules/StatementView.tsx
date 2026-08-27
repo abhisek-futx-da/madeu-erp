@@ -17,7 +17,8 @@ import { api } from '../lib/api';
  */
 
 interface Line {
-  section: 'income' | 'expense' | 'asset' | 'liability' | 'equity';
+  /** P&L and balance sheet sections, plus the Trading Account's own. */
+  section: string;
   code: string; name: string; control_account: string; amount: number;
 }
 interface PL { from: string; to: string; rows: Line[]; totals: { income: number; expense: number; netProfit: number } }
@@ -96,9 +97,21 @@ const TradingAccount: React.FC<{ data: Trading | null }> = ({ data }) => {
 
   return (
     <>
+      {/* Gross profit is a line in the account, not a note beside it: carried
+          down on the Dr side when there is a profit and on the Cr side when
+          there is a loss, so both columns total to the same figure and a
+          reader can see at a glance that the account balances. */}
       <div className="flex flex-col gap-6 md:flex-row">
-        <Column title="Dr" rows={data.debit} total={t.debitTotal - Math.max(t.grossProfit, 0)} />
-        <Column title="Cr" rows={data.credit} total={t.creditTotal} />
+        <Column title="Dr" total={t.debitTotal}
+          rows={profit ? [...data.debit, {
+            section: 'gross_profit', code: '', name: 'Gross Profit c/d',
+            control_account: '', amount: t.grossProfit
+          }] : data.debit} />
+        <Column title="Cr" total={t.creditTotal}
+          rows={profit ? data.credit : [...data.credit, {
+            section: 'gross_profit', code: '', name: 'Gross Loss c/d',
+            control_account: '', amount: -t.grossProfit
+          }]} />
       </div>
 
       <div className={`mt-4 rounded border p-3 text-center text-sm font-bold ${
