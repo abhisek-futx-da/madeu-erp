@@ -54,6 +54,7 @@ import { clearApiCache } from './lib/useApi';
 import { LogOut } from 'lucide-react';
 import { LocationSwitcher } from './components/LocationSwitcher';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
+import { useLang } from './lib/i18n';
 
 export const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -65,6 +66,7 @@ export const App: React.FC = () => {
   };
   const [activeModule, setActiveModule] = useState<string>(() => moduleFromUrl());
   const [openModules, setOpenModules] = useState<string[]>(() => [moduleFromUrl()]);
+  const { t } = useLang();
   const labels = useMemo(() => new Map(
     NAV.flatMap(group => group.items.map(item => [item.id, item.label] as const))
   ), []);
@@ -228,15 +230,15 @@ export const App: React.FC = () => {
           <span className="bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded border border-emerald-300 font-mono font-bold">
             {session.role}
           </span>
-          <button onClick={signOut} className="erp-btn py-0.5" title="Sign out">
+          <button onClick={signOut} className="erp-btn py-0.5" title={t('Sign out')}>
             <LogOut className="w-3 h-3 text-red-600" />
-            <span>Sign out</span>
+            <span>{t('Sign out')}</span>
           </button>
         </div>
       </div>
 
       <WorkspaceTabs
-        tabs={openModules.map(id => ({ id, label: labels.get(id) ?? id }))}
+        tabs={openModules.map(id => ({ id, label: t(labels.get(id) ?? id) }))}
         activeId={activeModule} onSelect={navigate} onClose={closeModule}
       />
       <div className="flex-1 overflow-hidden relative">

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ToolbarRibbon } from '../components/ToolbarRibbon';
 import { useApi } from '../lib/useApi';
 import { api, STATUS_LABEL } from '../lib/api';
+import { useLang } from '../lib/i18n';
 import { Columns3, Download, FileText, Printer, Save, Sheet, Trash2, RefreshCw } from 'lucide-react';
 
 /**
@@ -549,6 +550,7 @@ export const LiveReportView: React.FC<{
   report: keyof typeof REPORTS;
   onOpen?: (moduleKey: string) => void;
 }> = ({ report, onOpen }) => {
+  const { t } = useLang();
   const spec = REPORTS[report]!;
   /** The API's own name for this report, which the catalogue is keyed on. */
   const reportName = spec.path.replace('/reports/', '');
@@ -625,7 +627,7 @@ export const LiveReportView: React.FC<{
         <FileText className="w-4 h-4 text-blue-700" />
         <input
           value={filter} onChange={e => setFilter(e.target.value)} aria-label="Search this report"
-          placeholder="Search the whole report…" className="erp-input w-60 min-h-11"
+          placeholder={t('Search the whole report...')} className="erp-input w-60 min-h-11"
         />
         {period ? (
           <>
@@ -640,26 +642,27 @@ export const LiveReportView: React.FC<{
           </>
         ) : (
           <span className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-slate-600">
-            Position as on today — no date range applies
+            {t('Position as on today — no date range applies')}
           </span>
         )}
         <button onClick={reload} className="erp-btn min-h-11" title="Reload from server">
           <RefreshCw className="w-3.5 h-3.5 text-blue-600" />
-          <span>Refresh</span>
+          <span>{t('Refresh')}</span>
         </button>
-        <details className="relative"><summary className="erp-btn min-h-11 cursor-pointer list-none"><Columns3 className="h-4 w-4"/>Columns ({columns.length}/{spec.columns.length})</summary><div className="absolute left-0 z-20 mt-1 grid min-w-64 gap-1 rounded border bg-white p-3 shadow-xl">{spec.columns.map(column=><label key={column.key} className="flex min-h-9 items-center gap-2"><input type="checkbox" checked={visible.includes(column.key)} onChange={event=>setVisible(current=>event.target.checked?[...current,column.key]:current.length===1?current:current.filter(key=>key!==column.key))}/>{column.label}</label>)}</div></details>
+        <details className="relative"><summary className="erp-btn min-h-11 cursor-pointer list-none"><Columns3 className="h-4 w-4"/>{t('Columns')} ({columns.length}/{spec.columns.length})</summary><div className="absolute left-0 z-20 mt-1 grid min-w-64 gap-1 rounded border bg-white p-3 shadow-xl">{spec.columns.map(column=><label key={column.key} className="flex min-h-9 items-center gap-2"><input type="checkbox" checked={visible.includes(column.key)} onChange={event=>setVisible(current=>event.target.checked?[...current,column.key]:current.length===1?current:current.filter(key=>key!==column.key))}/>{t(column.label)}</label>)}</div></details>
         <span className="ml-auto font-semibold text-slate-600">
-          {loading ? 'Loading…' : total > rows.length
-            ? `${offset + 1}–${offset + rows.length} of ${total}`
-            : `${total} row${total === 1 ? '' : 's'}`}
+          {loading ? t('Loading…') : total > rows.length
+            ? t('{from}–{to} of {total}',
+                { from: offset + 1, to: offset + rows.length, total })
+            : t(total === 1 ? '{n} row' : '{n} rows', { n: total })}
         </span>
         <button className="erp-btn min-h-11" disabled={offset === 0}
-          onClick={() => setOffset(current => Math.max(0, current - PAGE))}>Previous</button>
+          onClick={() => setOffset(current => Math.max(0, current - PAGE))}>{t('Previous')}</button>
         <button className="erp-btn min-h-11" disabled={offset + rows.length >= total}
-          onClick={() => setOffset(current => current + PAGE)}>Next</button>
+          onClick={() => setOffset(current => current + PAGE)}>{t('Next')}</button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b bg-blue-50 px-3 py-2"><FileText className="h-4 w-4 text-blue-800"/><strong>My saved reports</strong><select aria-label="Saved report" className="erp-input min-h-11 min-w-48" value={selectedView} onChange={e=>applyView(e.target.value)}><option value="">Choose saved report</option>{(saved.data??[]).map(view=><option key={view.id} value={view.id}>{view.name}</option>)}</select><input aria-label="Saved report name" className="erp-input min-h-11 w-56" placeholder="Name this filter and layout" value={viewName} onChange={e=>setViewName(e.target.value)}/><button disabled={!viewName.trim()} className="erp-btn erp-btn-primary min-h-11" onClick={()=>void saveView()}><Save className="h-4 w-4"/>Save current</button><button disabled={!selectedView} className="erp-btn min-h-11" onClick={()=>void deleteView()}><Trash2 className="h-4 w-4 text-red-700"/>Delete</button><button className="erp-btn min-h-11" onClick={()=>void take('xlsx')}><Sheet className="h-4 w-4"/>Excel</button><button className="erp-btn min-h-11" onClick={()=>void take('csv')}><Download className="h-4 w-4"/>CSV</button><button className="erp-btn min-h-11" onClick={()=>void take('pdf')}><Printer className="h-4 w-4"/>Print PDF</button>{message&&<span role="status" className="font-semibold text-emerald-800">{message}</span>}</div>
+      <div className="flex flex-wrap items-center gap-2 border-b bg-blue-50 px-3 py-2"><FileText className="h-4 w-4 text-blue-800"/><strong>{t('My saved reports')}</strong><select aria-label="Saved report" className="erp-input min-h-11 min-w-48" value={selectedView} onChange={e=>applyView(e.target.value)}><option value="">{t('Choose saved report')}</option>{(saved.data??[]).map(view=><option key={view.id} value={view.id}>{view.name}</option>)}</select><input aria-label="Saved report name" className="erp-input min-h-11 w-56" placeholder={t('Name this filter and layout')} value={viewName} onChange={e=>setViewName(e.target.value)}/><button disabled={!viewName.trim()} className="erp-btn erp-btn-primary min-h-11" onClick={()=>void saveView()}><Save className="h-4 w-4"/>{t('Save current')}</button><button disabled={!selectedView} className="erp-btn min-h-11" onClick={()=>void deleteView()}><Trash2 className="h-4 w-4 text-red-700"/>{t('Delete')}</button><button className="erp-btn min-h-11" onClick={()=>void take('xlsx')}><Sheet className="h-4 w-4"/>{t('Excel')}</button><button className="erp-btn min-h-11" onClick={()=>void take('csv')}><Download className="h-4 w-4"/>{t('CSV')}</button><button className="erp-btn min-h-11" onClick={()=>void take('pdf')}><Printer className="h-4 w-4"/>{t('Print PDF')}</button>{message&&<span role="status" className="font-semibold text-emerald-800">{message}</span>}</div>
 
       {error && (
         <div className="bg-red-600 text-white px-4 py-1.5 font-semibold">{error}</div>
@@ -672,7 +675,7 @@ export const LiveReportView: React.FC<{
               {columns.map(c => (
                 <th key={c.key}
                     className={`px-2 py-1.5 font-bold ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
-                  {c.label}
+                  {t(c.label)}
                 </th>
               ))}
             </tr>
@@ -680,10 +683,10 @@ export const LiveReportView: React.FC<{
           <tbody>
             {!loading && rows.length === 0 && (
               <tr><td colSpan={columns.length} className="px-2 py-8 text-center text-slate-500">
-                <p>{next.message}</p>
+                <p>{t(next.message)}</p>
                 {onOpen && (
                   <button onClick={() => onOpen(next.module)} className="erp-btn erp-btn-primary mt-3">
-                    {next.action}
+                    {t(next.action)}
                   </button>
                 )}
               </td></tr>

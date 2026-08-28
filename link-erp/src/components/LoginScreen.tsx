@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, LogIn, AlertCircle } from 'lucide-react';
 import { auth } from '../lib/api';
+import { useLang } from '../lib/i18n';
 
 interface Props {
   onSignedIn: (tenant: string, role: string) => void;
@@ -8,6 +9,7 @@ interface Props {
 
 export const LoginScreen: React.FC<Props> = ({ onSignedIn }) => {
   // Convenience for the demo build only; production starts empty.
+  const { t } = useLang();
   const [email, setEmail] = useState(import.meta.env.DEV ? 'owner@neelkamal.test' : '');
   const [password, setPassword] = useState('');
   const [mfaCode, setMfaCode] = useState('');
@@ -57,7 +59,7 @@ export const LoginScreen: React.FC<Props> = ({ onSignedIn }) => {
         )}
 
         <div>
-          <label className="erp-label block" htmlFor="email">Email</label>
+          <label className="erp-label block" htmlFor="email">{t('Email')}</label>
           <input
             id="email" type="email" required autoComplete="username"
             value={email} onChange={e => { setEmail(e.target.value); setMfaRequired(false); setMfaCode(''); }}
@@ -66,7 +68,7 @@ export const LoginScreen: React.FC<Props> = ({ onSignedIn }) => {
         </div>
 
         <div>
-          <label className="erp-label block" htmlFor="password">Password</label>
+          <label className="erp-label block" htmlFor="password">{t('Password')}</label>
           <input
             id="password" type="password" required autoComplete="current-password"
             value={password} onChange={e => { setPassword(e.target.value); setMfaRequired(false); setMfaCode(''); }}
@@ -89,7 +91,7 @@ export const LoginScreen: React.FC<Props> = ({ onSignedIn }) => {
           className="erp-btn erp-btn-primary font-bold w-full justify-center py-1.5 disabled:opacity-60"
         >
           <LogIn className="w-3.5 h-3.5" />
-          <span>{busy ? 'Signing in…' : mfaRequired ? 'Verify & Sign In' : 'Sign In'}</span>
+          <span>{busy ? t('Signing in…') : mfaRequired ? t('Verify & Sign In') : t('Sign In')}</span>
         </button>
       </form>
     </div>
