@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { Plus, Printer, Search, Download, Save, RotateCcw } from 'lucide-react';
+import { useLang } from '../lib/i18n';
 
 /**
  * Only actions this screen can actually perform. The previous version rendered
@@ -52,6 +53,7 @@ const COMBO_MATCH: Record<ToolbarAction['key'], (e: KeyboardEvent) => boolean> =
 export const ToolbarRibbon: React.FC<Props> = ({
   title, actions, onSave, onNew, onPrint, onFind, onExport
 }) => {
+  const { t } = useLang();
   const list: ToolbarAction[] = actions ?? [
     ...(onSave ? [{ key: 'save' as const, onRun: onSave }] : []),
     ...(onNew ? [{ key: 'new' as const, onRun: onNew }] : []),
@@ -77,7 +79,7 @@ export const ToolbarRibbon: React.FC<Props> = ({
     <div className="bg-gradient-to-b from-[#f8fafc] to-[#e2e8f0] border-b border-[#cbd5e1] px-3 py-1.5 flex items-center justify-between shadow-2xs print:hidden">
       <div className="flex items-center gap-1 flex-wrap">
         <div className="bg-[#1e40af] text-white px-2 py-0.5 rounded text-xs font-bold mr-2 shadow-2xs">
-          {title}
+          {t(title)}
         </div>
 
         {list.map(action => {
@@ -89,11 +91,11 @@ export const ToolbarRibbon: React.FC<Props> = ({
               type="button"
               onClick={action.onRun}
               disabled={action.disabled}
-              title={action.hint ?? `${spec.label} (${spec.combo})`}
+              title={action.hint ?? `${t(spec.label)} (${spec.combo})`}
               className={`erp-btn ${spec.className} disabled:opacity-40 disabled:cursor-not-allowed`}
             >
               <Icon className="w-3.5 h-3.5" />
-              <span>{spec.label}</span>
+              <span>{t(spec.label)}</span>
             </button>
           );
         })}
@@ -101,7 +103,7 @@ export const ToolbarRibbon: React.FC<Props> = ({
 
       {list.length > 0 && (
         <div className="text-[11px] text-slate-600 hidden md:block">
-          {list.filter(a => !a.disabled).map(a => `${SPEC[a.key].combo} ${SPEC[a.key].label}`).join('  ·  ')}
+          {list.filter(a => !a.disabled).map(a => `${SPEC[a.key].combo} ${t(SPEC[a.key].label)}`).join('  ·  ')}
         </div>
       )}
     </div>

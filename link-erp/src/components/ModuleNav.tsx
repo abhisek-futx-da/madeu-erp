@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ChevronDown, Menu, X } from 'lucide-react';
+import { useLang } from '../lib/i18n';
 
 /**
  * Grouped navigation. A flat bar worked at nine modules and does not at
@@ -149,6 +150,7 @@ interface Props {
 }
 
 export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect, role }) => {
+  const { t } = useLang();
   const [open, setOpen] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const groups = NAV.map(group => ({
@@ -165,16 +167,16 @@ export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect, role }) => 
   };
 
   return (
-    <nav aria-label="Primary modules"
+    <nav aria-label={t('Primary modules')}
       className="bg-[#cbd5e1] border-b border-[#94a3b8] px-3 py-1 flex items-center gap-1 text-xs relative"
       onMouseLeave={() => setOpen(null)}
     >
       <button type="button" className="erp-btn min-h-11 md:hidden" aria-expanded={mobileOpen}
         aria-controls="mobile-module-menu" onClick={() => setMobileOpen(v => !v)}>
         {mobileOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-        {mobileOpen ? 'Close menu' : 'Menu'}
+        {mobileOpen ? t('Close menu') : t('Menu')}
       </button>
-      <span className="md:hidden ml-2 font-bold text-blue-950 truncate">{activeItem?.label ?? activeModule}</span>
+      <span className="md:hidden ml-2 font-bold text-blue-950 truncate">{t(activeItem?.label ?? activeModule)}</span>
       {groups.map(group => {
         const isActive = activeGroup?.label === group.label;
         return (
@@ -188,7 +190,7 @@ export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect, role }) => 
                   : 'bg-white/80 text-slate-700 hover:bg-white border border-slate-300'
               }`}
             >
-              <span>{group.label}</span>
+              <span>{t(group.label)}</span>
               <ChevronDown className="w-3 h-3" />
             </button>
 
@@ -202,7 +204,7 @@ export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect, role }) => 
                       item.id === activeModule ? 'bg-blue-100 font-bold text-blue-900' : 'text-slate-700'
                     }`}
                   >
-                    {item.label}
+                    {t(item.label)}
                   </button>
                 ))}
               </div>
@@ -212,16 +214,16 @@ export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect, role }) => 
       })}
 
       <div className="ml-auto hidden md:flex items-center gap-2 text-[11px] font-mono font-bold text-blue-950">
-        <span>Active:</span>
+        <span>{t('Active')}:</span>
         <span className="bg-blue-100 text-blue-900 px-2 py-0.5 rounded border border-blue-300">
-          {activeItem?.label ?? activeModule}
+          {t(activeItem?.label ?? activeModule)}
         </span>
       </div>
       {mobileOpen && (
         <div id="mobile-module-menu" className="absolute z-50 left-0 right-0 top-full bg-white border-b border-slate-400 shadow-xl max-h-[70dvh] overflow-y-auto p-3 md:hidden">
           {groups.map(group => (
             <section key={group.label} aria-labelledby={`mobile-${group.label}`} className="mb-3">
-              <h2 id={`mobile-${group.label}`} className="px-2 py-1 text-blue-950 font-bold uppercase tracking-wide">{group.label}</h2>
+              <h2 id={`mobile-${group.label}`} className="px-2 py-1 text-blue-950 font-bold uppercase tracking-wide">{t(group.label)}</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
                 {group.items.map(item => (
                   <button key={item.id} onClick={() => pick(item.id)}
@@ -231,7 +233,7 @@ export const ModuleNav: React.FC<Props> = ({ activeModule, onSelect, role }) => 
                         ? 'bg-blue-900 border-blue-950 text-white font-bold'
                         : 'bg-slate-50 border-slate-200 text-slate-800'
                     }`}>
-                    {item.label}
+                    {t(item.label)}
                   </button>
                 ))}
               </div>
